@@ -146,8 +146,10 @@ abstract class FileTransport implements BuildEventTransport {
         if (e.getCause() instanceof RuntimeException || e.getCause() instanceof Error) {
           closeFuture.setException(e.getCause());
         }
+        System.err.println("A THIRD EXCEPTION: "+e);
         exitFailure(e);
       } catch (IOException | InterruptedException | CancellationException e) {
+        System.err.println("ANOTHER EXCEPTION: "+e);
         exitFailure(e);
       } finally {
         try {
