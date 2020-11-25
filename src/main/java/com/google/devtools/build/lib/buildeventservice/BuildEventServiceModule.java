@@ -577,7 +577,7 @@ public abstract class BuildEventServiceModule<BESOptionsT extends BuildEventServ
 
   @Override
   public void afterCommand() throws AbruptExitException {
-    // System.err.println("BESM After command");
+    System.err.println("BESM After command");
     if (streamer != null) {
     System.err.println("We've got a streamer");
       if (!streamer.isClosed()) {
