@@ -231,7 +231,7 @@ class ByteStreamUploader extends AbstractReferenceCounted {
   public ListenableFuture<Void> uploadBlobAsync(
       Digest digest, Chunker chunker, boolean forceUpload) {
     synchronized (lock) {
-      if (!isShutdown) {
+      if (isShutdown) {
         System.err.println("Uploading blob async while shutdown");
       }
       checkState(!isShutdown, "Must not call uploadBlobs after shutdown.");
