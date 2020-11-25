@@ -187,6 +187,7 @@ class ByteStreamBuildEventArtifactUploader implements BuildEventArtifactUploader
       ImmutableIterable<PathMetadata> allPaths) {
     ImmutableList.Builder<ListenableFuture<PathMetadata>> allPathsUploaded =
         ImmutableList.builder();
+    uploader.retain();
     for (PathMetadata path : allPaths) {
       if (!path.isRemote() && !path.isDirectory()) {
         Chunker chunker =
@@ -204,6 +205,7 @@ class ByteStreamBuildEventArtifactUploader implements BuildEventArtifactUploader
         allPathsUploaded.add(Futures.immediateFuture(path));
       }
     }
+    uploader.release();
     return Futures.allAsList(allPathsUploaded.build());
   }
 
