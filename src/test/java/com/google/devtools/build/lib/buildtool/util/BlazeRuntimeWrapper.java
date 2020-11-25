@@ -200,7 +200,7 @@ public class BlazeRuntimeWrapper {
     initializeOptionsParser();
     commandCreated = true;
     if (env != null) {
-      System.err.println("Calling after command on runtime from wrapper");
+      // System.err.println("Calling after command on runtime from wrapper");
       runtime.afterCommand(env, BlazeCommandResult.success());
     }
 
@@ -297,7 +297,7 @@ public class BlazeRuntimeWrapper {
       // This cannot go into newCommand, because we hook up the EventCollectionApparatus as a
       // module, and after that ran, further changes to the apparatus aren't reflected on the
       // reporter.
-      System.err.println("Calling before command on all modules from wrapper");
+      env.getReporter().getOutErr().printErrLn("Calling before command on all modules from wrapper");
       for (BlazeModule module : runtime.getBlazeModules()) {
         module.beforeCommand(env);
       }
