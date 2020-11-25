@@ -43,12 +43,10 @@ public final class SkyFunctions {
       SkyFunctionName.createHermetic("PACKAGE_LOOKUP");
   public static final SkyFunctionName CONTAINING_PACKAGE_LOOKUP =
       SkyFunctionName.createHermetic("CONTAINING_PACKAGE_LOOKUP");
-  public static final SkyFunctionName AST_FILE_LOOKUP =
-      SkyFunctionName.createHermetic("AST_FILE_LOOKUP");
+  public static final SkyFunctionName BZL_COMPILE = SkyFunctionName.createHermetic("BZL_COMPILE");
   public static final SkyFunctionName STARLARK_BUILTINS =
       SkyFunctionName.createHermetic("STARLARK_BUILTINS");
-  public static final SkyFunctionName STARLARK_IMPORTS_LOOKUP =
-      SkyFunctionName.createHermetic("STARLARK_IMPORTS_LOOKUP");
+  public static final SkyFunctionName BZL_LOAD = SkyFunctionName.createHermetic("BZL_LOAD");
   public static final SkyFunctionName GLOB = SkyFunctionName.createHermetic("GLOB");
   public static final SkyFunctionName PACKAGE = SkyFunctionName.createHermetic("PACKAGE");
   static final SkyFunctionName PACKAGE_ERROR = SkyFunctionName.createHermetic("PACKAGE_ERROR");
@@ -74,8 +72,8 @@ public final class SkyFunctions {
       SkyFunctionName.createHermetic("COLLECT_TEST_SUITES_IN_PACKAGE");
   public static final SkyFunctionName COLLECT_PACKAGES_UNDER_DIRECTORY =
       SkyFunctionName.createHermetic("COLLECT_PACKAGES_UNDER_DIRECTORY");
-  public static final SkyFunctionName BLACKLISTED_PACKAGE_PREFIXES =
-      SkyFunctionName.createHermetic("BLACKLISTED_PACKAGE_PREFIXES");
+  public static final SkyFunctionName IGNORED_PACKAGE_PREFIXES =
+      SkyFunctionName.createHermetic("IGNORED_PACKAGE_PREFIXES");
   static final SkyFunctionName TEST_SUITE_EXPANSION =
       SkyFunctionName.createHermetic("TEST_SUITE_EXPANSION");
   static final SkyFunctionName TESTS_IN_SUITE = SkyFunctionName.createHermetic("TESTS_IN_SUITE");
@@ -85,8 +83,6 @@ public final class SkyFunctions {
   static final SkyFunctionName PREPARE_ANALYSIS_PHASE =
       SkyFunctionName.createNonHermetic("PREPARE_ANALYSIS_PHASE");
   static final SkyFunctionName RECURSIVE_PKG = SkyFunctionName.createHermetic("RECURSIVE_PKG");
-  static final SkyFunctionName TRANSITIVE_TARGET =
-      SkyFunctionName.createHermetic("TRANSITIVE_TARGET");
   public static final SkyFunctionName CONFIGURED_TARGET =
       SkyFunctionName.createHermetic("CONFIGURED_TARGET");
   static final SkyFunctionName ACTION_LOOKUP_CONFLICT_FINDING =

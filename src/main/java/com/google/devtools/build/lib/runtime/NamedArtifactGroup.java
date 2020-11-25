@@ -30,11 +30,12 @@ import com.google.devtools.build.lib.buildeventstream.BuildEventStreamProtos;
 import com.google.devtools.build.lib.buildeventstream.BuildEventStreamProtos.BuildEventId;
 import com.google.devtools.build.lib.buildeventstream.GenericBuildEvent;
 import com.google.devtools.build.lib.buildeventstream.PathConverter;
-import com.google.devtools.build.lib.collect.nestedset.NestedSetView;
+import com.google.devtools.build.lib.collect.nestedset.NestedSet;
+import com.google.devtools.build.lib.collect.nestedset.NestedSetBuilder;
+import com.google.devtools.build.lib.collect.nestedset.Order;
 import com.google.devtools.build.lib.vfs.Path;
 import com.google.devtools.build.lib.vfs.PathFragment;
 import java.util.Collection;
-import java.util.Set;
 import javax.annotation.Nullable;
 
 /**
@@ -45,16 +46,16 @@ import javax.annotation.Nullable;
 class NamedArtifactGroup implements BuildEvent {
   private final String name;
   private final CompletionContext completionContext;
-  private final NestedSetView<?> view;
+  private final NestedSet<?> set; // of Artifact or ExpandedArtifact
 
   /**
-   * Create a {@link NamedArtifactGroup}. The view may contain as direct entries {@link Artifact} or
-   * {@link ExpandedArtifact}.
+   * Create a {@link NamedArtifactGroup}. Although the set may contain a mixture of Artifacts and
+   * ExpandedArtifacts, all its leaf successors ("direct elements") are ExpandedArtifacts.
    */
-  NamedArtifactGroup(String name, CompletionContext completionContext, NestedSetView<?> view) {
+  NamedArtifactGroup(String name, CompletionContext completionContext, NestedSet<?> set) {
     this.name = name;
     this.completionContext = completionContext;
-    this.view = view;
+    this.set = set;
   }
 
   @Override
@@ -70,8 +71,8 @@ class NamedArtifactGroup implements BuildEvent {
   @Override
   public Collection<LocalFile> referencedLocalFiles() {
     ImmutableList.Builder<LocalFile> artifacts = ImmutableList.builder();
-    for (Object o : view.directs()) {
-      ExpandedArtifact expandedArtifact = (ExpandedArtifact) o;
+    for (Object elem : set.getLeaves()) {
+      ExpandedArtifact expandedArtifact = (ExpandedArtifact) elem;
       if (expandedArtifact.relPath == null) {
         artifacts.add(
             new LocalFile(
@@ -94,8 +95,8 @@ class NamedArtifactGroup implements BuildEvent {
 
     BuildEventStreamProtos.NamedSetOfFiles.Builder builder =
         BuildEventStreamProtos.NamedSetOfFiles.newBuilder();
-    for (Object o : view.directs()) {
-      ExpandedArtifact expandedArtifact = (ExpandedArtifact) o;
+    for (Object elem : set.getLeaves()) {
+      ExpandedArtifact expandedArtifact = (ExpandedArtifact) elem;
       if (expandedArtifact.relPath == null) {
         String uri =
             pathConverter.apply(completionContext.pathResolver().toPath(expandedArtifact.artifact));
@@ -116,65 +117,80 @@ class NamedArtifactGroup implements BuildEvent {
       }
     }
 
-    for (NestedSetView<?> child : view.transitives()) {
-      builder.addFileSets(namer.apply(child.identifier()));
+    for (NestedSet<?> succ : set.getNonLeaves()) {
+      builder.addFileSets(namer.apply(succ.toNode()));
     }
     return GenericBuildEvent.protoChaining(this).setNamedSetOfFiles(builder.build()).build();
   }
 
   /**
-   * Given a view with direct entries of {@link Artifact} and {@link ExpandedArtifact}, return a
-   * transformed view with any {@link Artifact} expanded to a set of {@link ExpandedArtifact}.
+   * Given a set whose leaf successors are {@link Artifact} and {@link ExpandedArtifact}, returns a
+   * new NestedSet whose leaf successors are all ExpandedArtifact. Non-leaf successors are
+   * unaltered.
    */
-  static NestedSetView<Object> expandView(CompletionContext ctx, NestedSetView<?> artifacts) {
-    ImmutableList.Builder<ExpandedArtifact> expandedArtifacts = ImmutableList.builder();
-    for (Object artifact : artifacts.directs()) {
+  static NestedSet<?> expandSet(CompletionContext ctx, NestedSet<?> artifacts) {
+    NestedSetBuilder<Object> res = new NestedSetBuilder<>(Order.STABLE_ORDER);
+    for (Object artifact : artifacts.getLeaves()) {
       if (artifact instanceof ExpandedArtifact) {
-        expandedArtifacts.add((ExpandedArtifact) artifact);
+        res.add(artifact);
       } else if (artifact instanceof Artifact) {
         ctx.visitArtifacts(
             ImmutableList.of((Artifact) artifact),
             new ArtifactReceiver() {
               @Override
               public void accept(Artifact artifact) {
-                expandedArtifacts.add(new ExpandedArtifact(artifact, null, null));
+                res.add(new ExpandedArtifact(artifact, null, null));
               }
 
               @Override
               public void acceptFilesetMapping(
                   Artifact fileset, PathFragment relName, Path targetFile) {
-                expandedArtifacts.add(new ExpandedArtifact(fileset, relName, targetFile));
+                res.add(new ExpandedArtifact(fileset, relName, targetFile));
               }
             });
       } else {
-        throw new IllegalStateException("Unexpected type in artifact view:  " + artifact);
+        throw new IllegalStateException("Unexpected type in artifact set:  " + artifact);
       }
     }
-    ImmutableList<ExpandedArtifact> expandedDirects = expandedArtifacts.build();
+    boolean noDirects = res.isEmpty();
 
-    Set<? extends NestedSetView<?>> transitives = artifacts.transitives();
-    Object[] directAndTransitiveArtifacts = new Object[expandedDirects.size() + transitives.size()];
-    int i = 0;
-    for (ExpandedArtifact a : expandedDirects) {
-      directAndTransitiveArtifacts[i++] = a;
-    }
-    for (NestedSetView<?> t : transitives) {
-      directAndTransitiveArtifacts[i++] = t.identifier();
+    ImmutableList<? extends NestedSet<?>> nonLeaves = artifacts.getNonLeaves();
+    for (NestedSet<?> succ : nonLeaves) {
+      res.addTransitive(succ);
     }
 
-    return new NestedSetView<>(directAndTransitiveArtifacts);
+    NestedSet<?> result = res.build();
+
+    // If we have executed one call to res.addTransitive(x)
+    // and none to res.add, then res.build() simply returns x
+    // ("inlining"), which may violate our postcondition on elements.
+    // (This can happen if 'artifacts' contains one non-leaf successor
+    // and one or more leaf successors for which visitArtifacts is a no-op.)
+    //
+    // In that case we need to recursively apply the expansion. Ugh.
+    if (noDirects && nonLeaves.size() == 1) {
+      return expandSet(ctx, result);
+    }
+
+    return result;
   }
 
   private static final class ExpandedArtifact {
-    public final Artifact artifact;
+    final Artifact artifact;
     // These fields are used only for Fileset links.
-    @Nullable public final PathFragment relPath;
-    @Nullable public final Path target;
+    @Nullable final PathFragment relPath;
+    @Nullable final Path target;
 
-    public ExpandedArtifact(Artifact artifact, PathFragment relPath, Path target) {
+    ExpandedArtifact(Artifact artifact, PathFragment relPath, Path target) {
       this.artifact = artifact;
       this.relPath = relPath;
       this.target = target;
     }
+
+    // TODO(adonovan): define equals/hashCode. Consider:
+    // //foo generates bar/ (a tree artifact), with a single child, bar/baz, with this child an
+    // explicitly named artifact (see b/70354083). Both of these artifacts are in its "files to
+    // build". Then bar/ will be expanded to bar/baz, and we will have two identical (but not equal)
+    // ExpandedArtifact objects, leading to a duplicate emission of bar/baz in BEP.
   }
 }

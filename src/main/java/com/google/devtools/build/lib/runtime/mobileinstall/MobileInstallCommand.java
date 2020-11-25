@@ -27,6 +27,8 @@ import com.google.devtools.build.lib.buildtool.BuildRequest;
 import com.google.devtools.build.lib.buildtool.BuildResult;
 import com.google.devtools.build.lib.buildtool.BuildTool;
 import com.google.devtools.build.lib.events.Event;
+import com.google.devtools.build.lib.profiler.Profiler;
+import com.google.devtools.build.lib.profiler.SilentCloseable;
 import com.google.devtools.build.lib.rules.android.WriteAdbArgsAction;
 import com.google.devtools.build.lib.rules.android.WriteAdbArgsAction.StartType;
 import com.google.devtools.build.lib.runtime.BlazeCommand;
@@ -37,10 +39,8 @@ import com.google.devtools.build.lib.runtime.CommonCommandOptions;
 import com.google.devtools.build.lib.runtime.ProjectFileSupport;
 import com.google.devtools.build.lib.runtime.commands.BuildCommand;
 import com.google.devtools.build.lib.server.FailureDetails.FailureDetail;
-import com.google.devtools.build.lib.server.FailureDetails.Interrupted;
 import com.google.devtools.build.lib.server.FailureDetails.MobileInstall;
 import com.google.devtools.build.lib.server.FailureDetails.MobileInstall.Code;
-import com.google.devtools.build.lib.shell.AbnormalTerminationException;
 import com.google.devtools.build.lib.shell.BadExitStatusException;
 import com.google.devtools.build.lib.shell.CommandException;
 import com.google.devtools.build.lib.util.CommandBuilder;
@@ -248,7 +248,7 @@ public class MobileInstallCommand implements BlazeCommand {
         env.getSkyframeExecutor()
             .getConfiguration(env.getReporter(), targetToRun.getConfigurationKey());
     cmdLine.add(
-        configuration.getBinFragment().getPathString()
+        configuration.getBinFragment(targetToRun.getLabel().getRepository()).getPathString()
             + "/"
             + targetToRun.getLabel().toPathFragment().getPathString()
             + "_mi/launcher");
@@ -297,7 +297,7 @@ public class MobileInstallCommand implements BlazeCommand {
             .setWorkingDir(workingDir)
             .build();
 
-    try {
+    try (SilentCloseable c = Profiler.instance().profile("mobile install")) {
       // Restore a raw EventHandler if it is registered. This allows for blaze run to produce the
       // actual output of the command being run even if --color=no is specified.
       env.getReporter().switchToAnsiAllowingHandler();
@@ -318,15 +318,13 @@ public class MobileInstallCommand implements BlazeCommand {
               + e.getMessage();
       env.getReporter().handle(Event.error(message));
       return createFailureResult(message, Code.NON_ZERO_EXIT);
-    } catch (AbnormalTerminationException e) {
-      // The process was likely terminated by a signal in this case.
-      return BlazeCommandResult.detailedExitCode(
-          InterruptedFailureDetails.detailedExitCode(
-              "mobile install interrupted", Interrupted.Code.MOBILE_INSTALL_COMMAND));
     } catch (CommandException e) {
       String message = "Error running program: " + e.getMessage();
       env.getReporter().handle(Event.error(message));
       return createFailureResult(message, Code.ERROR_RUNNING_PROGRAM);
+    } catch (InterruptedException e) {
+      return BlazeCommandResult.detailedExitCode(
+          InterruptedFailureDetails.detailedExitCode("mobile install interrupted"));
     }
   }
 

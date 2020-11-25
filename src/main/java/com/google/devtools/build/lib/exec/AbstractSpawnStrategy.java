@@ -44,11 +44,15 @@ import com.google.devtools.build.lib.exec.SpawnRunner.ProgressStatus;
 import com.google.devtools.build.lib.exec.SpawnRunner.SpawnExecutionContext;
 import com.google.devtools.build.lib.profiler.Profiler;
 import com.google.devtools.build.lib.profiler.SilentCloseable;
+import com.google.devtools.build.lib.server.FailureDetails;
+import com.google.devtools.build.lib.server.FailureDetails.FailureDetail;
+import com.google.devtools.build.lib.server.FailureDetails.Spawn.Code;
 import com.google.devtools.build.lib.util.CommandFailureUtils;
 import com.google.devtools.build.lib.util.io.FileOutErr;
 import com.google.devtools.build.lib.vfs.Path;
 import com.google.devtools.build.lib.vfs.PathFragment;
 import java.io.IOException;
+import java.io.InterruptedIOException;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.SortedMap;
@@ -68,10 +72,12 @@ public abstract class AbstractSpawnStrategy implements SandboxedSpawnStrategy {
 
   private final SpawnInputExpander spawnInputExpander;
   private final SpawnRunner spawnRunner;
+  private final boolean verboseFailures;
 
-  public AbstractSpawnStrategy(Path execRoot, SpawnRunner spawnRunner) {
+  protected AbstractSpawnStrategy(Path execRoot, SpawnRunner spawnRunner, boolean verboseFailures) {
     this.spawnInputExpander = new SpawnInputExpander(execRoot, false);
     this.spawnRunner = spawnRunner;
+    this.verboseFailures = verboseFailures;
   }
 
   /**
@@ -108,14 +114,20 @@ public abstract class AbstractSpawnStrategy implements SandboxedSpawnStrategy {
     SpawnExecutionContext context =
         new SpawnExecutionContextImpl(spawn, actionExecutionContext, stopConcurrentSpawns, timeout);
 
-    SpawnCache cache = actionExecutionContext.getContext(SpawnCache.class);
+    // Avoid caching for runners which handle caching internally e.g. RemoteSpawnRunner.
+    SpawnCache cache =
+        spawnRunner.handlesCaching()
+            ? SpawnCache.NO_CACHE
+            : actionExecutionContext.getContext(SpawnCache.class);
+
     // In production, the getContext method guarantees that we never get null back. However, our
     // integration tests don't set it up correctly, so cache may be null in testing.
     if (cache == null) {
       cache = SpawnCache.NO_CACHE;
     }
-    // Avoid caching for runners which handle caching internally e.g. RemoteSpawnRunner
-    if (spawnRunner.handlesCaching()) {
+
+    // Avoid using the remote cache of a dynamic execution setup for the local runner.
+    if (context.speculating() && !cache.usefulInDynamicExecution()) {
       cache = SpawnCache.NO_CACHE;
     }
     SpawnResult spawnResult;
@@ -133,8 +145,15 @@ public abstract class AbstractSpawnStrategy implements SandboxedSpawnStrategy {
           cacheHandle.store(spawnResult);
         }
       }
+    } catch (InterruptedIOException e) {
+      throw new InterruptedException(e.getMessage());
     } catch (IOException e) {
-      throw new EnvironmentalExecException(e);
+      throw new EnvironmentalExecException(
+          e,
+          FailureDetail.newBuilder()
+              .setMessage("Exec failed due to IOException")
+              .setSpawn(FailureDetails.Spawn.newBuilder().setCode(Code.EXEC_IO_EXCEPTION))
+              .build());
     } catch (SpawnExecException e) {
       ex = e;
       spawnResult = e.getSpawnResult();
@@ -147,7 +166,7 @@ public abstract class AbstractSpawnStrategy implements SandboxedSpawnStrategy {
         spawnLogContext.logSpawn(
             spawn,
             actionExecutionContext.getMetadataProvider(),
-            context.getInputMapping(true),
+            context.getInputMapping(),
             context.getTimeout(),
             spawnResult);
       } catch (IOException e) {
@@ -168,8 +187,7 @@ public abstract class AbstractSpawnStrategy implements SandboxedSpawnStrategy {
           !Strings.isNullOrEmpty(resultMessage)
               ? resultMessage
               : CommandFailureUtils.describeCommandFailure(
-                  actionExecutionContext.showVerboseFailures(
-                      spawn.getResourceOwner().getOwner().getLabel()),
+                  verboseFailures,
                   spawn.getArguments(),
                   spawn.getEnvironment(),
                   cwd,
@@ -211,7 +229,7 @@ public abstract class AbstractSpawnStrategy implements SandboxedSpawnStrategy {
       if (Spawns.shouldPrefetchInputsForLocalExecution(spawn)) {
         actionExecutionContext
             .getActionInputPrefetcher()
-            .prefetchFiles(getInputMapping(true).values(), getMetadataProvider());
+            .prefetchFiles(getInputMapping().values(), getMetadataProvider());
       }
     }
 
@@ -263,8 +281,7 @@ public abstract class AbstractSpawnStrategy implements SandboxedSpawnStrategy {
     }
 
     @Override
-    public SortedMap<PathFragment, ActionInput> getInputMapping(
-        boolean expandTreeArtifactsInRunfiles) throws IOException {
+    public SortedMap<PathFragment, ActionInput> getInputMapping() throws IOException {
       if (lazyInputMapping == null) {
         try (SilentCloseable c =
             Profiler.instance().profile("AbstractSpawnStrategy.getInputMapping")) {
@@ -272,9 +289,7 @@ public abstract class AbstractSpawnStrategy implements SandboxedSpawnStrategy {
               spawnInputExpander.getInputMapping(
                   spawn,
                   actionExecutionContext.getArtifactExpander(),
-                  actionExecutionContext.getPathResolver(),
-                  actionExecutionContext.getMetadataProvider(),
-                  expandTreeArtifactsInRunfiles);
+                  actionExecutionContext.getMetadataProvider());
         }
       }
       return lazyInputMapping;

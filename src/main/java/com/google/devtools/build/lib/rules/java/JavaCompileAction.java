@@ -14,15 +14,19 @@
 
 package com.google.devtools.build.lib.rules.java;
 
+import static com.google.common.collect.ImmutableSet.toImmutableSet;
 import static java.nio.charset.StandardCharsets.ISO_8859_1;
+import static java.util.concurrent.TimeUnit.SECONDS;
 
 import com.google.common.annotations.VisibleForTesting;
 import com.google.common.base.Joiner;
+import com.google.common.base.Strings;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.Iterables;
 import com.google.common.collect.Maps;
+import com.google.common.flogger.GoogleLogger;
 import com.google.common.util.concurrent.ListenableFuture;
 import com.google.devtools.build.lib.actions.AbstractAction;
 import com.google.devtools.build.lib.actions.ActionContinuationOrResult;
@@ -39,6 +43,7 @@ import com.google.devtools.build.lib.actions.CommandAction;
 import com.google.devtools.build.lib.actions.CommandLine;
 import com.google.devtools.build.lib.actions.CommandLineExpansionException;
 import com.google.devtools.build.lib.actions.CommandLines;
+import com.google.devtools.build.lib.actions.CommandLines.CommandLineAndParamFileInfo;
 import com.google.devtools.build.lib.actions.EmptyRunfilesSupplier;
 import com.google.devtools.build.lib.actions.EnvironmentalExecException;
 import com.google.devtools.build.lib.actions.ExecException;
@@ -52,6 +57,7 @@ import com.google.devtools.build.lib.actions.SpawnResult;
 import com.google.devtools.build.lib.actions.extra.ExtraActionInfo;
 import com.google.devtools.build.lib.analysis.actions.CustomCommandLine;
 import com.google.devtools.build.lib.analysis.config.BuildConfiguration;
+import com.google.devtools.build.lib.analysis.starlark.Args;
 import com.google.devtools.build.lib.collect.nestedset.NestedSet;
 import com.google.devtools.build.lib.collect.nestedset.NestedSetBuilder;
 import com.google.devtools.build.lib.collect.nestedset.Order;
@@ -60,11 +66,12 @@ import com.google.devtools.build.lib.concurrent.ThreadSafety.ThreadCompatible;
 import com.google.devtools.build.lib.exec.SpawnStrategyResolver;
 import com.google.devtools.build.lib.rules.java.JavaConfiguration.JavaClasspathMode;
 import com.google.devtools.build.lib.rules.java.JavaPluginInfoProvider.JavaPluginInfo;
+import com.google.devtools.build.lib.server.FailureDetails.FailureDetail;
+import com.google.devtools.build.lib.server.FailureDetails.JavaCompile;
+import com.google.devtools.build.lib.server.FailureDetails.JavaCompile.Code;
 import com.google.devtools.build.lib.skyframe.serialization.autocodec.AutoCodec;
-import com.google.devtools.build.lib.syntax.EvalException;
-import com.google.devtools.build.lib.syntax.Location;
-import com.google.devtools.build.lib.syntax.Sequence;
-import com.google.devtools.build.lib.syntax.StarlarkList;
+import com.google.devtools.build.lib.starlarkbuildapi.CommandLineArgsApi;
+import com.google.devtools.build.lib.util.DetailedExitCode;
 import com.google.devtools.build.lib.util.Fingerprint;
 import com.google.devtools.build.lib.util.LazyString;
 import com.google.devtools.build.lib.view.proto.Deps;
@@ -77,11 +84,15 @@ import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import javax.annotation.Nullable;
+import net.starlark.java.eval.EvalException;
+import net.starlark.java.eval.Sequence;
+import net.starlark.java.eval.StarlarkList;
 
 /** Action that represents a Java compilation. */
 @ThreadCompatible
 @Immutable
 public class JavaCompileAction extends AbstractAction implements CommandAction {
+  private static final GoogleLogger logger = GoogleLogger.forEnclosingClass();
   private static final ResourceSet LOCAL_RESOURCES =
       ResourceSet.createWithRamCpu(/* memoryMb= */ 750, /* cpuUsage= */ 1);
   private static final UUID GUID = UUID.fromString("e423747c-2827-49e6-b961-f6c08c10bb51");
@@ -174,12 +185,15 @@ public class JavaCompileAction extends AbstractAction implements CommandAction {
   }
 
   @Override
-  protected void computeKey(ActionKeyContext actionKeyContext, Fingerprint fp)
-      throws CommandLineExpansionException {
+  protected void computeKey(
+      ActionKeyContext actionKeyContext,
+      @Nullable Artifact.ArtifactExpander artifactExpander,
+      Fingerprint fp)
+      throws CommandLineExpansionException, InterruptedException {
     fp.addUUID(GUID);
     fp.addInt(classpathMode.ordinal());
-    executableLine.addToFingerprint(actionKeyContext, fp);
-    flagLine.addToFingerprint(actionKeyContext, fp);
+    executableLine.addToFingerprint(actionKeyContext, artifactExpander, fp);
+    flagLine.addToFingerprint(actionKeyContext, artifactExpander, fp);
     // As the classpath is no longer part of commandLines implicitly, we need to explicitly add
     // the transitive inputs to the key here.
     actionKeyContext.addNestedSetToFingerprint(fp, transitiveInputs);
@@ -251,7 +265,7 @@ public class JavaCompileAction extends AbstractAction implements CommandAction {
       ActionExecutionContext actionExecutionContext,
       ReducedClasspath reducedClasspath,
       boolean fallback)
-      throws CommandLineExpansionException {
+      throws CommandLineExpansionException, InterruptedException {
     CustomCommandLine.Builder classpathLine = CustomCommandLine.builder();
     if (fallback) {
       classpathLine.addExecPaths("--classpath", transitiveInputs);
@@ -290,7 +304,7 @@ public class JavaCompileAction extends AbstractAction implements CommandAction {
   }
 
   private JavaSpawn getFullSpawn(ActionExecutionContext actionExecutionContext)
-      throws CommandLineExpansionException {
+      throws CommandLineExpansionException, InterruptedException {
     CommandLines.ExpandedCommandLines expandedCommandLines =
         getCommandLines()
             .expand(
@@ -327,7 +341,7 @@ public class JavaCompileAction extends AbstractAction implements CommandAction {
         try {
           reducedClasspath = getReducedClasspath(actionExecutionContext, context);
         } catch (IOException e) {
-          throw new ActionExecutionException(e, this, /*catastrophe=*/ false);
+          throw createActionExecutionException(e, Code.REDUCED_CLASSPATH_FAILURE);
         }
         spawn = getReducedSpawn(actionExecutionContext, reducedClasspath, /* fallback= */ false);
       } else {
@@ -335,7 +349,7 @@ public class JavaCompileAction extends AbstractAction implements CommandAction {
         spawn = getFullSpawn(actionExecutionContext);
       }
     } catch (CommandLineExpansionException e) {
-      throw new ActionExecutionException(e, this, /*catastrophe=*/ false);
+      throw createActionExecutionException(e, Code.COMMAND_LINE_EXPANSION_FAILURE);
     }
     SpawnContinuation spawnContinuation =
         actionExecutionContext
@@ -425,7 +439,7 @@ public class JavaCompileAction extends AbstractAction implements CommandAction {
 
   @Override
   public ExtraActionInfo.Builder getExtraActionInfo(ActionKeyContext actionKeyContext)
-      throws CommandLineExpansionException {
+      throws CommandLineExpansionException, InterruptedException {
     ExtraActionInfo.Builder builder = super.getExtraActionInfo(actionKeyContext);
     CommandLines commandLinesWithoutExecutable =
         CommandLines.builder()
@@ -487,11 +501,11 @@ public class JavaCompileAction extends AbstractAction implements CommandAction {
   }
 
   @Override
-  public Sequence<String> getStarlarkArgv() throws EvalException {
+  public Sequence<String> getStarlarkArgv() throws EvalException, InterruptedException {
     try {
       return StarlarkList.immutableCopyOf(getArguments());
-    } catch (CommandLineExpansionException exception) {
-      throw new EvalException(Location.BUILTIN, exception);
+    } catch (CommandLineExpansionException ex) {
+      throw new EvalException(ex);
     }
   }
 
@@ -502,8 +516,19 @@ public class JavaCompileAction extends AbstractAction implements CommandAction {
   }
 
   @Override
-  public List<String> getArguments() throws CommandLineExpansionException {
+  public List<String> getArguments() throws CommandLineExpansionException, InterruptedException {
     return ImmutableList.copyOf(getCommandLines().allArguments());
+  }
+
+  @Override
+  public Sequence<CommandLineArgsApi> getStarlarkArgs() throws EvalException {
+    ImmutableList.Builder<CommandLineArgsApi> result = ImmutableList.builder();
+    ImmutableSet<Artifact> directoryInputs =
+        getInputs().toList().stream().filter(Artifact::isDirectory).collect(toImmutableSet());
+    for (CommandLineAndParamFileInfo commandLine : getCommandLines().getCommandLines()) {
+      result.add(Args.forRegisteredAction(commandLine, directoryInputs));
+    }
+    return StarlarkList.immutableCopyOf(result.build());
   }
 
   @Override
@@ -521,16 +546,6 @@ public class JavaCompileAction extends AbstractAction implements CommandAction {
     return null;
   }
 
-  public Artifact getOutputDepsProto() {
-    return outputDepsProto;
-  }
-
-  private ActionExecutionException toActionExecutionException(
-      ExecException e, boolean verboseFailures) {
-    String failMessage = getRawProgressMessage();
-    return e.toActionExecutionException(failMessage, verboseFailures, this);
-  }
-
   /** Reads the {@code .jdeps} output from the given spawn results. */
   private Deps.Dependencies readOutputDepsProto(
       List<SpawnResult> results, ActionExecutionContext actionExecutionContext)
@@ -543,10 +558,23 @@ public class JavaCompileAction extends AbstractAction implements CommandAction {
             : inMemoryOutput) {
       return Deps.Dependencies.parseFrom(input);
     } catch (IOException e) {
-      throw toActionExecutionException(
-          new EnvironmentalExecException(e),
-          actionExecutionContext.showVerboseFailures(getOwner().getLabel()));
+      throw new EnvironmentalExecException(
+              e, createFailureDetail(".jdeps read IOException", Code.JDEPS_READ_IO_EXCEPTION))
+          .toActionExecutionException(this);
     }
+  }
+
+  private ActionExecutionException createActionExecutionException(Exception e, Code detailedCode) {
+    DetailedExitCode detailedExitCode =
+        DetailedExitCode.of(createFailureDetail(Strings.nullToEmpty(e.getMessage()), detailedCode));
+    return new ActionExecutionException(e, this, /*catastrophe=*/ false, detailedExitCode);
+  }
+
+  private static FailureDetail createFailureDetail(String message, Code detailedCode) {
+    return FailureDetail.newBuilder()
+        .setMessage(message)
+        .setJavaCompile(JavaCompile.newBuilder().setCode(detailedCode))
+        .build();
   }
 
   private final class JavaActionContinuation extends ActionContinuationOrResult {
@@ -593,15 +621,30 @@ public class JavaCompileAction extends AbstractAction implements CommandAction {
           return ActionContinuationOrResult.of(ActionResult.create(results));
         }
 
+        logger.atInfo().atMostEvery(1, SECONDS).log(
+            "Failed reduced classpath compilation for %s", JavaCompileAction.this.prettyPrint());
         // Fall back to running with the full classpath. This requires first deleting potential
         // artifacts generated by the reduced action and clearing the metadata caches.
-        deleteOutputs(actionExecutionContext.getExecRoot());
+        try {
+          deleteOutputs(
+              actionExecutionContext.getExecRoot(),
+              actionExecutionContext.getPathResolver(),
+              /*bulkDeleter=*/ null);
+        } catch (IOException e) {
+          throw new EnvironmentalExecException(
+                  e,
+                  createFailureDetail(
+                      "Failed to delete reduced action outputs",
+                      Code.REDUCED_CLASSPATH_FALLBACK_CLEANUP_FAILURE))
+              .toActionExecutionException(JavaCompileAction.this);
+        }
         actionExecutionContext.getMetadataHandler().resetOutputs(getOutputs());
         Spawn spawn;
         try {
           spawn = getReducedSpawn(actionExecutionContext, reducedClasspath, /* fallback=*/ true);
         } catch (CommandLineExpansionException e) {
-          throw new ActionExecutionException(e, JavaCompileAction.this, /*catastrophe=*/ false);
+          Code detailedCode = Code.COMMAND_LINE_EXPANSION_FAILURE;
+          throw createActionExecutionException(e, detailedCode);
         }
         SpawnContinuation fallbackContinuation =
             actionExecutionContext
@@ -609,13 +652,8 @@ public class JavaCompileAction extends AbstractAction implements CommandAction {
                 .beginExecution(spawn, actionExecutionContext);
         return new JavaFallbackActionContinuation(
             actionExecutionContext, results, fallbackContinuation);
-      } catch (IOException e) {
-        throw toActionExecutionException(
-            new EnvironmentalExecException(e),
-            actionExecutionContext.showVerboseFailures(getOwner().getLabel()));
       } catch (ExecException e) {
-        throw toActionExecutionException(
-            e, actionExecutionContext.showVerboseFailures(getOwner().getLabel()));
+        throw e.toActionExecutionException(JavaCompileAction.this);
       }
     }
   }
@@ -659,8 +697,7 @@ public class JavaCompileAction extends AbstractAction implements CommandAction {
             ActionResult.create(
                 ImmutableList.copyOf(Iterables.concat(primaryResults, fallbackResults))));
       } catch (ExecException e) {
-        throw toActionExecutionException(
-            e, actionExecutionContext.showVerboseFailures(getOwner().getLabel()));
+        throw e.toActionExecutionException(JavaCompileAction.this);
       }
     }
   }

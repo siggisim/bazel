@@ -22,13 +22,7 @@ import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.Iterables;
 import com.google.devtools.build.lib.cmdline.Label;
 import com.google.devtools.build.lib.collect.nestedset.Depset;
-import com.google.devtools.build.lib.collect.nestedset.NestedSet.NestedSetDepthException;
 import com.google.devtools.build.lib.skyframe.serialization.autocodec.AutoCodec;
-import com.google.devtools.build.lib.syntax.EvalException;
-import com.google.devtools.build.lib.syntax.EvalUtils;
-import com.google.devtools.build.lib.syntax.Printer;
-import com.google.devtools.build.lib.syntax.Sequence;
-import com.google.devtools.build.lib.syntax.Starlark;
 import com.google.devtools.build.lib.util.LoggingUtil;
 import com.google.devtools.build.lib.util.StringCanonicalizer;
 import java.util.ArrayList;
@@ -36,9 +30,15 @@ import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.RandomAccess;
 import java.util.Set;
 import java.util.logging.Level;
 import javax.annotation.Nullable;
+import net.starlark.java.eval.EvalException;
+import net.starlark.java.eval.Printer;
+import net.starlark.java.eval.Sequence;
+import net.starlark.java.eval.Starlark;
+import net.starlark.java.eval.StarlarkInt;
 
 /**
  * Root of Type symbol hierarchy for values in the build language.
@@ -79,6 +79,11 @@ import javax.annotation.Nullable;
  * since we seem to be doing fine so far without it), and not overly complicate BUILD files or rule
  * implementation functions.
  */
+// TODO(adonovan): update documentation here and elsewhere to use the term
+// "rule attribute values" or "valid attribute types" where appropriate,
+// and not "value in the build language", which is a much broader set of
+// possible Starlark values. Also link to the canonical set of valid attribute
+// types, both Starlark and native.
 public abstract class Type<T> {
 
   protected Type() {}
@@ -98,6 +103,7 @@ public abstract class Type<T> {
    * @param context the label of the current BUILD rule; must be non-null if resolution of
    *     package-relative label strings is required
    * @throws ConversionException if there was a problem performing the type conversion
+   * @throws NullPointerException if x is null.
    */
   public abstract T convert(Object x, Object what, @Nullable Object context)
       throws ConversionException;
@@ -120,7 +126,7 @@ public abstract class Type<T> {
   @Nullable
   public final T convertOptional(Object x, String what, @Nullable Object context, T defaultValue)
       throws ConversionException {
-    if (EvalUtils.isNullOrNone(x)) {
+    if (Starlark.isNullOrNone(x)) {
       return defaultValue;
     }
     return convert(x, what, context);
@@ -201,10 +207,12 @@ public abstract class Type<T> {
   }
 
   /**
-   * Implementation of concatenation for this type (e.g. "val1 + val2"). Returns null to
-   * indicate concatenation isn't supported.
+   * Implementation of concatenation for this type, as if by {@code elements[0] + ... +
+   * elements[n-1]}). Returns null to indicate concatenation isn't supported. This method exists to
+   * support deferred additions {@code select + T} for catenable types T such as string, int, and
+   * list.
    */
-  public T concat(@SuppressWarnings("unused") Iterable<T> elements) {
+  public T concat(Iterable<T> elements) {
     return null;
   }
 
@@ -222,8 +230,8 @@ public abstract class Type<T> {
     throw new UnsupportedOperationException(msg);
   }
 
-  /** The type of an integer. */
-  @AutoCodec public static final Type<Integer> INTEGER = new IntegerType();
+  /** The type of a Starlark integer in the signed 32-bit range. */
+  @AutoCodec public static final Type<StarlarkInt> INTEGER = new IntegerType();
 
   /** The type of a string. */
   @AutoCodec public static final Type<String> STRING = new StringType();
@@ -234,11 +242,11 @@ public abstract class Type<T> {
   /** The type of a list of not-yet-typed objects. */
   @AutoCodec public static final ObjectListType OBJECT_LIST = new ObjectListType();
 
-  /** The type of a list of {@linkplain #STRING strings}. */
+  /** The type of a list of strings. */
   @AutoCodec public static final ListType<String> STRING_LIST = ListType.create(STRING);
 
-  /** The type of a list of {@linkplain #INTEGER strings}. */
-  @AutoCodec public static final ListType<Integer> INTEGER_LIST = ListType.create(INTEGER);
+  /** The type of a list of signed 32-bit Starlark integer values. */
+  @AutoCodec public static final ListType<StarlarkInt> INTEGER_LIST = ListType.create(INTEGER);
 
   /** The type of a dictionary of {@linkplain #STRING strings}. */
   @AutoCodec
@@ -265,7 +273,7 @@ public abstract class Type<T> {
    */
   public static class ConversionException extends EvalException {
     private static String message(Type<?> type, Object value, @Nullable Object what) {
-      Printer.BasePrinter printer = Printer.getPrinter();
+      Printer printer = new Printer();
       printer.append("expected value of type '").append(type.toString()).append("'");
       if (what != null) {
         printer.append(" for ").append(what.toString());
@@ -276,12 +284,13 @@ public abstract class Type<T> {
       return printer.toString();
     }
 
+    /** Contructs a conversion error. Throws NullPointerException if value is null. */
     public ConversionException(Type<?> type, Object value, @Nullable Object what) {
-      super(null, message(type, value, what));
+      super(message(type, Preconditions.checkNotNull(value), what));
     }
 
     public ConversionException(String message) {
-      super(null, message);
+      super(message);
     }
   }
 
@@ -314,19 +323,22 @@ public abstract class Type<T> {
 
     @Override
     public Object convert(Object x, Object what, Object context) {
-      return x;
+      return Preconditions.checkNotNull(x);
     }
   }
 
-  private static class IntegerType extends Type<Integer> {
+  // A Starlark integer in the signed 32-bit range (like Java int).
+  private static class IntegerType extends Type<StarlarkInt> {
     @Override
-    public Integer cast(Object value) {
-      return (Integer) value;
+    public StarlarkInt cast(Object value) {
+      // This cast will fail if passed a java.lang.Integer,
+      // as it is not a legal Starlark value. Use StarlarkInt.
+      return (StarlarkInt) value;
     }
 
     @Override
-    public Integer getDefaultValue() {
-      return 0;
+    public StarlarkInt getDefaultValue() {
+      return StarlarkInt.of(0);
     }
 
     @Override
@@ -339,21 +351,36 @@ public abstract class Type<T> {
     }
 
     @Override
-    public Integer convert(Object x, Object what, Object context)
-        throws ConversionException {
-      if (!(x instanceof Integer)) {
-        throw new ConversionException(this, x, what);
+    public StarlarkInt convert(Object x, Object what, Object context) throws ConversionException {
+      if (x instanceof StarlarkInt) {
+        StarlarkInt i = (StarlarkInt) x;
+        try {
+          i.toIntUnchecked(); // assert signed 32-bit
+        } catch (
+            @SuppressWarnings("UnusedException")
+            IllegalArgumentException ex) {
+          String prefix = what != null ? ("for " + what + ", ") : "";
+          throw new ConversionException(
+              String.format("%sgot %s, want value in signed 32-bit range", prefix, i));
+        }
+        return i;
       }
-      return (Integer) x;
+      if (x instanceof Integer) {
+        throw new IllegalArgumentException("Integer is not a legal Starlark value");
+      }
+      throw new ConversionException(this, x, what);
     }
 
     @Override
-    public Integer concat(Iterable<Integer> elements) {
-      int ans = 0;
-      for (Integer elem : elements) {
-        ans += elem;
+    public StarlarkInt concat(Iterable<StarlarkInt> elements) {
+      StarlarkInt sum = StarlarkInt.of(0);
+      for (StarlarkInt elem : elements) {
+        sum = StarlarkInt.add(sum, elem);
       }
-      return Integer.valueOf(ans);
+      // Perform narrowing conversion to ensure that the result
+      // remains in the signed 32-bit range. This means that
+      // s=select(0x7fffffff); s+s may yield a negative result.
+      return StarlarkInt.of(sum.truncateToInt());
     }
   }
 
@@ -384,7 +411,7 @@ public abstract class Type<T> {
       if (x instanceof Boolean) {
         return (Boolean) x;
       }
-      Integer xAsInteger = INTEGER.convert(x, what, context);
+      int xAsInteger = INTEGER.convert(x, what, context).toIntUnchecked();
       if (xAsInteger == 0) {
         return false;
       } else if (xAsInteger == 1) {
@@ -468,9 +495,11 @@ public abstract class Type<T> {
 
     @Override
     public <T> void visitLabels(LabelVisitor<T> visitor, Object value, T context) {
-      for (Map.Entry<KeyT, ValueT> entry : cast(value).entrySet()) {
-        keyType.visitLabels(visitor, entry.getKey(), context);
-        valueType.visitLabels(visitor, entry.getValue(), context);
+      if (labelClass != LabelClass.NONE) {
+        for (Map.Entry<KeyT, ValueT> entry : cast(value).entrySet()) {
+          keyType.visitLabels(visitor, entry.getKey(), context);
+          valueType.visitLabels(visitor, entry.getValue(), context);
+        }
       }
     }
 
@@ -527,7 +556,7 @@ public abstract class Type<T> {
     @Override
     public Map<KeyT, ValueT> convert(Object x, Object what, Object context)
         throws ConversionException {
-      if (!(x instanceof Map<?, ?>)) {
+      if (!(x instanceof Map)) {
         throw new ConversionException(this, x, what);
       }
       Map<?, ?> o = (Map<?, ?>) x;
@@ -586,9 +615,13 @@ public abstract class Type<T> {
 
     @Override
     public <T> void visitLabels(LabelVisitor<T> visitor, Object value, T context) {
+      if (elemType.getLabelClass() == LabelClass.NONE) {
+        return;
+      }
+
       List<ElemT> elems = cast(value);
       // Hot code path. Optimize for lists with O(1) access to avoid iterator garbage.
-      if (elems instanceof ImmutableList || elems instanceof ArrayList) {
+      if (elems instanceof RandomAccess) {
         for (int i = 0; i < elems.size(); i++) {
           elemType.visitLabels(visitor, elems.get(i), context);
         }
@@ -612,17 +645,7 @@ public abstract class Type<T> {
       if (x instanceof Iterable) {
         iterable = (Iterable<?>) x;
       } else if (x instanceof Depset) {
-        try {
-          iterable = ((Depset) x).toList();
-        } catch (NestedSetDepthException exception) {
-          throw new ConversionException(
-              "depset exceeded maximum depth "
-                  + exception.getDepthLimit()
-                  + ". This was only discovered when attempting to flatten the depset for"
-                  + " iteration, as the size of depsets is unknown until flattening. See"
-                  + " https://github.com/bazelbuild/bazel/issues/9180 for details and possible "
-                  + "solutions.");
-        }
+        iterable = ((Depset) x).toList();
       } else {
         throw new ConversionException(this, x, what);
       }
@@ -713,7 +736,7 @@ public abstract class Type<T> {
     @SuppressWarnings("unchecked")
     public List<Object> convert(Object x, Object what, Object context)
         throws ConversionException {
-      // TODO(adonovan): converge on EvalUtils.toIterable.
+      // TODO(adonovan): converge on Starlark.toIterable.
       if (x instanceof Sequence) {
         return ((Sequence) x).getImmutableList();
       } else if (x instanceof List) {

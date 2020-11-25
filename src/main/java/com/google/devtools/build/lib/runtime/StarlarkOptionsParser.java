@@ -14,7 +14,6 @@
 
 package com.google.devtools.build.lib.runtime;
 
-import static com.google.common.collect.ImmutableList.toImmutableList;
 import static com.google.devtools.build.lib.analysis.config.CoreOptionConverters.BUILD_SETTING_CONVERTERS;
 import static com.google.devtools.build.lib.packages.RuleClass.Builder.STARLARK_BUILD_SETTING_DEFAULT_ATTR_NAME;
 import static com.google.devtools.build.lib.packages.Type.BOOLEAN;
@@ -24,6 +23,8 @@ import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.Iterables;
 import com.google.common.collect.Maps;
+import com.google.devtools.build.lib.cmdline.LabelValidator;
+import com.google.devtools.build.lib.cmdline.LabelValidator.BadLabelException;
 import com.google.devtools.build.lib.cmdline.TargetParsingException;
 import com.google.devtools.build.lib.events.ExtendedEventHandler;
 import com.google.devtools.build.lib.events.Reporter;
@@ -39,7 +40,6 @@ import com.google.devtools.common.options.Converter;
 import com.google.devtools.common.options.OptionsParser;
 import com.google.devtools.common.options.OptionsParsingException;
 import java.util.Collections;
-import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 
@@ -88,17 +88,14 @@ public class StarlarkOptionsParser {
         Maps.newHashMapWithExpectedSize(nativeOptionsParser.getResidue().size());
 
     // sort the old residue into starlark flags and legitimate residue
-    Iterator<String> unparsedArgs = nativeOptionsParser.getPreDoubleDashResidue().iterator();
-    while (unparsedArgs.hasNext()) {
-      String arg = unparsedArgs.next();
-
+    for (String arg : nativeOptionsParser.getPreDoubleDashResidue()) {
       // TODO(bazel-team): support single dash options?
       if (!arg.startsWith("--")) {
         residue.add(arg);
         continue;
       }
 
-      parseArg(arg, unparsedArgs, unparsedOptions, eventHandler);
+      parseArg(arg, unparsedOptions, eventHandler);
     }
 
     List<String> postDoubleDashResidue = nativeOptionsParser.getPostDoubleDashResidue();
@@ -136,7 +133,6 @@ public class StarlarkOptionsParser {
       if (!value.equals(
           buildSettingTarget
               .getAssociatedRule()
-              .getAttributeContainer()
               .getAttr(STARLARK_BUILD_SETTING_DEFAULT_ATTR_NAME))) {
         parsedOptions.put(loadedFlag, value);
       }
@@ -146,7 +142,6 @@ public class StarlarkOptionsParser {
 
   private void parseArg(
       String arg,
-      Iterator<String> unparsedArgs,
       Map<String, Pair<String, Target>> unparsedOptions,
       ExtendedEventHandler eventHandler)
       throws OptionsParsingException {
@@ -180,12 +175,7 @@ public class StarlarkOptionsParser {
           throw new OptionsParsingException(
               "Illegal use of 'no' prefix on non-boolean option: " + name, name);
         }
-        if (unparsedArgs.hasNext()) {
-          // --flag value
-          unparsedOptions.put(name, new Pair<>(unparsedArgs.next(), buildSettingTarget));
-        } else {
-          throw new OptionsParsingException("Expected value after " + arg);
-        }
+        throw new OptionsParsingException("Expected value after " + arg);
       }
     }
   }
@@ -208,11 +198,11 @@ public class StarlarkOptionsParser {
     } catch (InterruptedException | TargetParsingException e) {
       Thread.currentThread().interrupt();
       throw new OptionsParsingException(
-          "Error loading option " + targetToBuild + ": " + e.getMessage(), e);
+          "Error loading option " + targetToBuild + ": " + e.getMessage(), targetToBuild, e);
     }
     Rule associatedRule = buildSetting.getAssociatedRule();
     if (associatedRule == null || associatedRule.getRuleClassObject().getBuildSetting() == null) {
-      throw new OptionsParsingException("Unrecognized option: " + targetToBuild);
+      throw new OptionsParsingException("Unrecognized option: " + targetToBuild, targetToBuild);
     }
     return buildSetting;
   }
@@ -220,19 +210,41 @@ public class StarlarkOptionsParser {
   /**
    * Separates out any Starlark options from the given list
    *
+   * <p>This method doesn't go through the trouble to actually load build setting targets and verify
+   * they are build settings, it just assumes all strings that look like they could be build
+   * settings, aka are formatted like a flag and can parse out to a proper label, are build
+   * settings. Use actual parsing functions above to do full build setting verification.
+   *
    * @param list List of strings from which to parse out starlark options
    * @return Returns a pair of string lists. The first item contains the list of starlark options
    *     that were removed; the second contains the remaining string from the original list.
    */
   public static Pair<ImmutableList<String>, ImmutableList<String>> removeStarlarkOptions(
       List<String> list) {
-    ImmutableList<String> removed =
-        list.stream()
-            .filter(r -> r.startsWith("--//") || r.startsWith("--no//"))
-            .collect(toImmutableList());
-    ImmutableList<String> kept =
-        list.stream().filter(r -> !removed.contains(r)).collect(toImmutableList());
-    return Pair.of(removed, kept);
+    ImmutableList.Builder<String> keep = ImmutableList.builder();
+    ImmutableList.Builder<String> remove = ImmutableList.builder();
+    for (String name : list) {
+      // Check if the string is a flag and trim off "--" if so.
+      if (!name.startsWith("--")) {
+        keep.add(name);
+        continue;
+      }
+      String potentialStarlarkFlag = name.substring(2);
+      // Check if the string uses the "no" prefix for setting boolean flags to false, trim
+      // off "no" if so.
+      if (name.startsWith("no")) {
+        potentialStarlarkFlag = potentialStarlarkFlag.substring(2);
+      }
+      // Check if we can properly parse the (potentially trimmed) string as a label. If so, count
+      // as starlark flag, else count as regular residue.
+      try {
+        LabelValidator.validateAbsoluteLabel(potentialStarlarkFlag);
+        remove.add(name);
+      } catch (BadLabelException e) {
+        keep.add(name);
+      }
+    }
+    return Pair.of(remove.build(), keep.build());
   }
 
   @VisibleForTesting

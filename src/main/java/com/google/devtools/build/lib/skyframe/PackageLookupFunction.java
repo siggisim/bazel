@@ -27,10 +27,9 @@ import com.google.devtools.build.lib.packages.BuildFileNotFoundException;
 import com.google.devtools.build.lib.packages.ErrorDeterminingRepositoryException;
 import com.google.devtools.build.lib.packages.NoSuchPackageException;
 import com.google.devtools.build.lib.packages.RepositoryFetchException;
+import com.google.devtools.build.lib.packages.semantics.BuildLanguageOptions;
 import com.google.devtools.build.lib.pkgcache.PathPackageLocator;
 import com.google.devtools.build.lib.repository.ExternalPackageHelper;
-import com.google.devtools.build.lib.syntax.EvalException;
-import com.google.devtools.build.lib.syntax.StarlarkSemantics;
 import com.google.devtools.build.lib.vfs.PathFragment;
 import com.google.devtools.build.lib.vfs.Root;
 import com.google.devtools.build.lib.vfs.RootedPath;
@@ -42,6 +41,8 @@ import com.google.devtools.build.skyframe.SkyValue;
 import java.io.IOException;
 import java.util.concurrent.atomic.AtomicReference;
 import javax.annotation.Nullable;
+import net.starlark.java.eval.EvalException;
+import net.starlark.java.eval.StarlarkSemantics;
 
 /**
  * SkyFunction for {@link PackageLookupValue}s.
@@ -95,19 +96,19 @@ public class PackageLookupFunction implements SkyFunction {
     }
 
     if (packageKey.equals(LabelConstants.EXTERNAL_PACKAGE_IDENTIFIER)) {
-      return semantics.experimentalDisableExternalPackage()
+      return semantics.getBool(BuildLanguageOptions.EXPERIMENTAL_DISABLE_EXTERNAL_PACKAGE)
           ? PackageLookupValue.NO_BUILD_FILE_VALUE
           : computeWorkspacePackageLookupValue(env);
     }
 
     // Check .bazelignore file under main repository.
-    BlacklistedPackagePrefixesValue blacklistedPatternsValue =
-        (BlacklistedPackagePrefixesValue) env.getValue(BlacklistedPackagePrefixesValue.key());
-    if (blacklistedPatternsValue == null) {
+    IgnoredPackagePrefixesValue ignoredPatternsValue =
+        (IgnoredPackagePrefixesValue) env.getValue(IgnoredPackagePrefixesValue.key());
+    if (ignoredPatternsValue == null) {
       return null;
     }
 
-    if (isPackageIgnored(packageKey, blacklistedPatternsValue)) {
+    if (isPackageIgnored(packageKey, ignoredPatternsValue)) {
       return PackageLookupValue.DELETED_PACKAGE_VALUE;
     }
 
@@ -236,18 +237,12 @@ public class PackageLookupFunction implements SkyFunction {
             Transience.PERSISTENT);
       }
 
-      StarlarkSemantics starlarkSemantics = PrecomputedValue.STARLARK_SEMANTICS.get(env);
-      if (starlarkSemantics == null) {
-        return null;
-      }
-
       if (localRepository.exists()
           && !localRepository.getRepository().equals(packageIdentifier.getRepository())) {
         // There is a repository mismatch, this is an error.
         // The correct package path is the one originally given, minus the part that is the local
         // repository.
-        PathFragment pathToRequestedPackage =
-            packageIdentifier.getExecPath(starlarkSemantics.experimentalSiblingRepositoryLayout());
+        PathFragment pathToRequestedPackage = packageIdentifier.getSourceRoot();
         PathFragment localRepositoryPath = localRepository.getPath();
         if (localRepositoryPath.isAbsolute()) {
           // We need the package path to also be absolute.
@@ -281,9 +276,9 @@ public class PackageLookupFunction implements SkyFunction {
   }
 
   private static boolean isPackageIgnored(
-      PackageIdentifier id, BlacklistedPackagePrefixesValue blacklistedPatternsValue) {
+      PackageIdentifier id, IgnoredPackagePrefixesValue ignoredPatternsValue) {
     PathFragment packageFragment = id.getPackageFragment();
-    for (PathFragment pattern : blacklistedPatternsValue.getPatterns()) {
+    for (PathFragment pattern : ignoredPatternsValue.getPatterns()) {
       if (packageFragment.startsWith(pattern)) {
         return true;
       }
@@ -329,15 +324,21 @@ public class PackageLookupFunction implements SkyFunction {
     SkyKey repositoryKey = RepositoryValue.key(id.getRepository());
     RepositoryValue repositoryValue;
     try {
-      repositoryValue = (RepositoryValue) env.getValueOrThrow(
-          repositoryKey, NoSuchPackageException.class, IOException.class, EvalException.class);
+      repositoryValue =
+          (RepositoryValue)
+              env.getValueOrThrow(
+                  repositoryKey,
+                  NoSuchPackageException.class,
+                  IOException.class,
+                  EvalException.class,
+                  AlreadyReportedException.class);
       if (repositoryValue == null) {
         return null;
       }
     } catch (NoSuchPackageException e) {
       throw new PackageLookupFunctionException(new BuildFileNotFoundException(id, e.getMessage()),
           Transience.PERSISTENT);
-    } catch (IOException | EvalException e) {
+    } catch (IOException | EvalException | AlreadyReportedException e) {
       throw new PackageLookupFunctionException(
           new RepositoryFetchException(id, e.getMessage()), Transience.PERSISTENT);
     }
@@ -347,14 +348,14 @@ public class PackageLookupFunction implements SkyFunction {
     }
 
     // Check .bazelignore file after fetching the external repository.
-    BlacklistedPackagePrefixesValue blacklistedPatternsValue =
-        (BlacklistedPackagePrefixesValue)
-            env.getValue(BlacklistedPackagePrefixesValue.key(id.getRepository()));
-    if (blacklistedPatternsValue == null) {
+    IgnoredPackagePrefixesValue ignoredPatternsValue =
+        (IgnoredPackagePrefixesValue)
+            env.getValue(IgnoredPackagePrefixesValue.key(id.getRepository()));
+    if (ignoredPatternsValue == null) {
       return null;
     }
 
-    if (isPackageIgnored(id, blacklistedPatternsValue)) {
+    if (isPackageIgnored(id, ignoredPatternsValue)) {
       return PackageLookupValue.DELETED_PACKAGE_VALUE;
     }
 

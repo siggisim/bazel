@@ -18,9 +18,11 @@ import static com.google.common.truth.Truth.assertThat;
 import static com.google.devtools.build.lib.analysis.ToolchainCollection.DEFAULT_EXEC_GROUP_NAME;
 
 import com.google.common.collect.ImmutableMap;
+import com.google.common.collect.ImmutableSet;
 import com.google.devtools.build.lib.analysis.config.BuildConfiguration;
 import com.google.devtools.build.lib.analysis.util.BuildViewTestCase;
 import com.google.devtools.build.lib.cmdline.Label;
+import com.google.devtools.build.lib.packages.ExecGroup;
 import com.google.devtools.build.lib.packages.Provider;
 import com.google.devtools.build.lib.packages.StarlarkProvider;
 import com.google.devtools.build.lib.packages.StructImpl;
@@ -31,14 +33,14 @@ import org.junit.runners.JUnit4;
 
 /**
  * Test for exec groups. Functionality related to rule context tested in {@link
- * com.google.devtools.build.lib.skylark.StarlarkRuleContextTest}.
+ * com.google.devtools.build.lib.starlark.StarlarkRuleContextTest}.
  */
 @RunWith(JUnit4.class)
 public class StarlarkExecGroupTest extends BuildViewTestCase {
 
   @Before
   public final void setUp() throws Exception {
-    setStarlarkSemanticsOptions("--experimental_exec_groups");
+    setBuildLanguageOptions("--experimental_exec_groups");
   }
 
   /**
@@ -151,10 +153,10 @@ public class StarlarkExecGroupTest extends BuildViewTestCase {
         getConfiguration(
             (ConfiguredTarget) ((StructImpl) target.get(key)).getValue("exec_group_dep"));
 
-    assertThat(dep.getOptions().get(PlatformOptions.class).platforms)
-        .containsExactly(Label.parseAbsoluteUnchecked("//platform:platform_1"));
-    assertThat(execGroupDep.getOptions().get(PlatformOptions.class).platforms)
-        .containsExactly(Label.parseAbsoluteUnchecked("//platform:platform_2"));
+    assertThat(dep.getFragment(PlatformConfiguration.class).getTargetPlatform())
+        .isEqualTo(Label.parseAbsoluteUnchecked("//platform:platform_1"));
+    assertThat(execGroupDep.getFragment(PlatformConfiguration.class).getTargetPlatform())
+        .isEqualTo(Label.parseAbsoluteUnchecked("//platform:platform_2"));
   }
 
   @Test
@@ -361,5 +363,32 @@ public class StarlarkExecGroupTest extends BuildViewTestCase {
     reporter.removeHandler(failFastHandler);
     getConfiguredTarget("//test:papaya");
     assertContainsEvent("errors encountered while analyzing target '//test:papaya'");
+  }
+
+  @Test
+  public void testInheritsRuleRequirements() throws Exception {
+    createToolchainsAndPlatforms();
+    scratch.file(
+        "test/defs.bzl",
+        "MyInfo = provider()",
+        "def _impl(ctx):",
+        "  return []",
+        "my_rule = rule(",
+        "  implementation = _impl,",
+        "  exec_groups = {",
+        "    'watermelon': exec_group(copy_from_rule = True),",
+        "  },",
+        "  exec_compatible_with = ['//platform:constraint_1'],",
+        "  toolchains = ['//rule:toolchain_type_1'],",
+        ")");
+    scratch.file("test/BUILD", "load('//test:defs.bzl', 'my_rule')", "my_rule(name = 'papaya')");
+
+    ConfiguredTarget ct = getConfiguredTarget("//test:papaya");
+    assertThat(getRuleContext(ct).getRule().getRuleClassObject().getExecGroups())
+        .containsExactly(
+            "watermelon",
+            ExecGroup.createCopied(
+                ImmutableSet.of(Label.parseAbsoluteUnchecked("//rule:toolchain_type_1")),
+                ImmutableSet.of(Label.parseAbsoluteUnchecked("//platform:constraint_1"))));
   }
 }

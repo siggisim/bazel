@@ -13,25 +13,24 @@
 // limitations under the License.
 package com.google.devtools.build.lib.rules.android;
 
-
+import com.google.common.base.Ascii;
 import com.google.common.collect.ImmutableList;
-import com.google.common.collect.ImmutableSet;
+import com.google.devtools.build.lib.analysis.Allowlist;
 import com.google.devtools.build.lib.analysis.RuleContext;
-import com.google.devtools.build.lib.analysis.Whitelist;
 import com.google.devtools.build.lib.analysis.config.BuildOptions;
-import com.google.devtools.build.lib.analysis.config.ConfigurationFragmentFactory;
 import com.google.devtools.build.lib.analysis.config.CoreOptionConverters.EmptyToNullLabelConverter;
 import com.google.devtools.build.lib.analysis.config.CoreOptionConverters.LabelConverter;
 import com.google.devtools.build.lib.analysis.config.Fragment;
 import com.google.devtools.build.lib.analysis.config.FragmentOptions;
 import com.google.devtools.build.lib.analysis.config.InvalidConfigurationException;
-import com.google.devtools.build.lib.analysis.skylark.annotations.StarlarkConfigurationField;
+import com.google.devtools.build.lib.analysis.config.RequiresOptions;
+import com.google.devtools.build.lib.analysis.starlark.annotations.StarlarkConfigurationField;
 import com.google.devtools.build.lib.cmdline.Label;
 import com.google.devtools.build.lib.concurrent.ThreadSafety.Immutable;
 import com.google.devtools.build.lib.rules.cpp.CppConfiguration.DynamicMode;
 import com.google.devtools.build.lib.rules.cpp.CppOptions.DynamicModeConverter;
 import com.google.devtools.build.lib.rules.cpp.CppOptions.LibcTopLabelConverter;
-import com.google.devtools.build.lib.skylarkbuildapi.android.AndroidConfigurationApi;
+import com.google.devtools.build.lib.starlarkbuildapi.android.AndroidConfigurationApi;
 import com.google.devtools.common.options.Converters;
 import com.google.devtools.common.options.EnumConverter;
 import com.google.devtools.common.options.Option;
@@ -43,6 +42,7 @@ import javax.annotation.Nullable;
 
 /** Configuration fragment for Android rules. */
 @Immutable
+@RequiresOptions(options = {AndroidConfiguration.Options.class})
 public class AndroidConfiguration extends Fragment implements AndroidConfigurationApi {
 
   /**
@@ -76,14 +76,6 @@ public class AndroidConfiguration extends Fragment implements AndroidConfigurati
       extends EnumConverter<ManifestMergerOrder> {
     public ManifestMergerOrderConverter() {
       super(ManifestMergerOrder.class, "android manifest merger order");
-    }
-  }
-
-  // TODO(b/142520065): Remove.
-  /** Converter for {@link AndroidAaptVersion} */
-  public static final class AndroidAaptConverter extends EnumConverter<AndroidAaptVersion> {
-    public AndroidAaptConverter() {
-      super(AndroidAaptVersion.class, "android androidAaptVersion");
     }
   }
 
@@ -178,12 +170,6 @@ public class AndroidConfiguration extends Fragment implements AndroidConfigurati
     ALPHABETICAL_BY_CONFIGURATION,
     /** Library manifests come before the manifests of their dependencies. */
     DEPENDENCY;
-  }
-
-  /** Types of android manifest mergers. */
-  @Deprecated
-  public enum AndroidAaptVersion {
-    AAPT2;
   }
 
   /** Android configuration options. */
@@ -297,6 +283,18 @@ public class AndroidConfiguration extends Fragment implements AndroidConfigurati
                 + "flag is specified, then --android_cpu is ignored for dependencies of "
                 + "android_binary rules.")
     public List<String> fatApkCpus;
+
+    @Option(
+        name = "fat_apk_hwasan",
+        defaultValue = "false",
+        documentationCategory = OptionDocumentationCategory.OUTPUT_PARAMETERS,
+        effectTags = {
+          OptionEffectTag.AFFECTS_OUTPUTS,
+          OptionEffectTag.LOADING_AND_ANALYSIS,
+          OptionEffectTag.LOSES_INCREMENTAL_STATE,
+        },
+        help = "Whether to create HWASAN splits.")
+    public boolean fatApkHwasan;
 
     // For desugaring lambdas when compiling Java 8 sources. Do not use on the command line.
     // The idea is that once this option works, we'll flip the default value in a config file, then
@@ -614,22 +612,6 @@ public class AndroidConfiguration extends Fragment implements AndroidConfigurati
                 + "before the manifests of its dependencies.")
     public ManifestMergerOrder manifestMergerOrder;
 
-    // TODO(b/142520065): Remove.
-    @Option(
-        name = "android_aapt",
-        defaultValue = "aapt2",
-        documentationCategory = OptionDocumentationCategory.TOOLCHAIN,
-        effectTags = {
-          OptionEffectTag.AFFECTS_OUTPUTS,
-          OptionEffectTag.LOADING_AND_ANALYSIS,
-          OptionEffectTag.LOSES_INCREMENTAL_STATE,
-        },
-        converter = AndroidAaptConverter.class,
-        help =
-            "Selects the version of androidAaptVersion to use for android_binary rules."
-                + "Flag to help the test and transition to aapt2.")
-    public AndroidAaptVersion androidAaptVersion;
-
     @Option(
         name = "apk_signing_method",
         converter = ApkSigningMethodConverter.class,
@@ -688,6 +670,21 @@ public class AndroidConfiguration extends Fragment implements AndroidConfigurati
         metadataTags = OptionMetadataTag.EXPERIMENTAL,
         help = "Use android databinding v2 with 3.4.0 argument")
     public boolean dataBindingUpdatedArgs;
+
+    @Option(
+        name = "android_databinding_use_androidx",
+        defaultValue = "false",
+        documentationCategory = OptionDocumentationCategory.OUTPUT_PARAMETERS,
+        effectTags = {
+          OptionEffectTag.AFFECTS_OUTPUTS,
+          OptionEffectTag.LOADING_AND_ANALYSIS,
+          OptionEffectTag.LOSES_INCREMENTAL_STATE,
+        },
+        metadataTags = OptionMetadataTag.EXPERIMENTAL,
+        help =
+            "Generate AndroidX-compatible data-binding files. "
+                + "This is only used with databinding v2.")
+    public boolean dataBindingAndroidX;
 
     @Option(
         name = "experimental_android_library_exports_manifest_default",
@@ -750,6 +747,20 @@ public class AndroidConfiguration extends Fragment implements AndroidConfigurati
             "If enabled, direct usage of the native Android rules is disabled. Please use the"
                 + " Starlark Android rules from https://github.com/bazelbuild/rules_android")
     public boolean disableNativeAndroidRules;
+
+    @Option(
+        name = "incompatible_enable_android_toolchain_resolution",
+        defaultValue = "false",
+        documentationCategory = OptionDocumentationCategory.TOOLCHAIN,
+        effectTags = {OptionEffectTag.LOADING_AND_ANALYSIS},
+        metadataTags = {
+          OptionMetadataTag.INCOMPATIBLE_CHANGE,
+          OptionMetadataTag.TRIGGERED_BY_ALL_INCOMPATIBLE_CHANGES
+        },
+        help =
+            "Use toolchain resolution to select the Android SDK for android rules (Starlark and"
+                + " native)")
+    public boolean incompatibleUseToolchainResolution;
 
     @Option(
         name = "experimental_filter_r_jars_from_android_test",
@@ -926,7 +937,6 @@ public class AndroidConfiguration extends Fragment implements AndroidConfigurati
       host.useWorkersWithDexbuilder = useWorkersWithDexbuilder;
       host.manifestMerger = manifestMerger;
       host.manifestMergerOrder = manifestMergerOrder;
-      host.androidAaptVersion = androidAaptVersion;
       host.allowAndroidLibraryDepsWithoutSrcs = allowAndroidLibraryDepsWithoutSrcs;
       host.oneVersionEnforcementUseTransitiveJarsForBinaryUnderTest =
           oneVersionEnforcementUseTransitiveJarsForBinaryUnderTest;
@@ -937,24 +947,6 @@ public class AndroidConfiguration extends Fragment implements AndroidConfigurati
       // Unless the build was started from an Android device, host means MAIN.
       host.configurationDistinguisher = ConfigurationDistinguisher.MAIN;
       return host;
-    }
-  }
-
-  /** Configuration loader for the Android fragment. */
-  public static class Loader implements ConfigurationFragmentFactory {
-    @Override
-    public Fragment create(BuildOptions buildOptions) throws InvalidConfigurationException {
-      return new AndroidConfiguration(buildOptions.get(Options.class));
-    }
-
-    @Override
-    public Class<? extends Fragment> creates() {
-      return AndroidConfiguration.class;
-    }
-
-    @Override
-    public ImmutableSet<Class<? extends FragmentOptions>> requiredOptions() {
-      return ImmutableSet.of(Options.class);
     }
   }
 
@@ -994,6 +986,7 @@ public class AndroidConfiguration extends Fragment implements AndroidConfigurati
   private final boolean oneVersionEnforcementUseTransitiveJarsForBinaryUnderTest;
   private final boolean dataBindingV2;
   private final boolean dataBindingUpdatedArgs;
+  private final boolean dataBindingAndroidX;
   private final boolean persistentBusyboxTools;
   private final boolean filterRJarsFromAndroidTest;
   private final boolean removeRClassesFromInstrumentationTestJar;
@@ -1002,8 +995,10 @@ public class AndroidConfiguration extends Fragment implements AndroidConfigurati
   private final boolean useRTxtFromMergedResources;
   private final Label legacyMainDexListGenerator;
   private final boolean disableInstrumentationManifestMerging;
+  private final boolean incompatibleUseToolchainResolution;
 
-  private AndroidConfiguration(Options options) throws InvalidConfigurationException {
+  public AndroidConfiguration(BuildOptions buildOptions) throws InvalidConfigurationException {
+    Options options = buildOptions.get(Options.class);
     this.sdk = options.sdk;
     this.cpu = options.cpu;
     this.configurationDistinguisher = options.configurationDistinguisher;
@@ -1047,6 +1042,7 @@ public class AndroidConfiguration extends Fragment implements AndroidConfigurati
         options.oneVersionEnforcementUseTransitiveJarsForBinaryUnderTest;
     this.dataBindingV2 = options.dataBindingV2;
     this.dataBindingUpdatedArgs = options.dataBindingUpdatedArgs;
+    this.dataBindingAndroidX = options.dataBindingAndroidX;
     this.persistentBusyboxTools = options.persistentBusyboxTools;
     this.filterRJarsFromAndroidTest = options.filterRJarsFromAndroidTest;
     this.removeRClassesFromInstrumentationTestJar =
@@ -1057,11 +1053,7 @@ public class AndroidConfiguration extends Fragment implements AndroidConfigurati
     this.useRTxtFromMergedResources = options.useRTxtFromMergedResources;
     this.legacyMainDexListGenerator = options.legacyMainDexListGenerator;
     this.disableInstrumentationManifestMerging = options.disableInstrumentationManifestMerging;
-
-    if (options.androidAaptVersion != AndroidAaptVersion.AAPT2) {
-      throw new InvalidConfigurationException(
-          "--android_aapt is no longer available for setting aapt version to aapt");
-    }
+    this.incompatibleUseToolchainResolution = options.incompatibleUseToolchainResolution;
 
     if (incrementalDexingShardsAfterProguard < 0) {
       throw new InvalidConfigurationException(
@@ -1179,7 +1171,7 @@ public class AndroidConfiguration extends Fragment implements AndroidConfigurati
 
   public boolean allowSrcsLessAndroidLibraryDeps(RuleContext ruleContext) {
     return allowAndroidLibraryDepsWithoutSrcs
-        && Whitelist.isAvailable(ruleContext, "allow_deps_without_srcs");
+        && Allowlist.isAvailable(ruleContext, "allow_deps_without_srcs");
   }
 
   @Override
@@ -1204,6 +1196,11 @@ public class AndroidConfiguration extends Fragment implements AndroidConfigurati
 
   public AndroidManifestMerger getManifestMerger() {
     return manifestMerger;
+  }
+
+  @Override
+  public String getManifestMergerValue() {
+    return Ascii.toLowerCase(manifestMerger.name());
   }
 
   public ManifestMergerOrder getManifestMergerOrder() {
@@ -1280,8 +1277,18 @@ public class AndroidConfiguration extends Fragment implements AndroidConfigurati
   }
 
   @Override
+  public boolean useDataBindingAndroidX() {
+    return dataBindingAndroidX;
+  }
+
+  @Override
   public boolean persistentBusyboxTools() {
     return persistentBusyboxTools;
+  }
+
+  @Override
+  public boolean incompatibleUseToolchainResolution() {
+    return incompatibleUseToolchainResolution;
   }
 
   @Override

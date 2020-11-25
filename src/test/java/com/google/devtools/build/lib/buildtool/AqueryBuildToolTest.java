@@ -20,12 +20,16 @@ import com.google.common.collect.ImmutableMap;
 import com.google.devtools.build.lib.buildtool.AqueryBuildTool.AqueryActionFilterException;
 import com.google.devtools.build.lib.buildtool.util.BuildIntegrationTestCase;
 import com.google.devtools.build.lib.query2.aquery.ActionGraphQueryEnvironment;
+import com.google.devtools.build.lib.query2.aquery.AqueryOptions;
 import com.google.devtools.build.lib.query2.engine.QueryEnvironment.QueryFunction;
 import com.google.devtools.build.lib.query2.engine.QueryExpression;
 import com.google.devtools.build.lib.query2.engine.QueryParser;
+import com.google.devtools.build.lib.runtime.BlazeCommandResult;
 import com.google.devtools.build.lib.runtime.Command;
 import com.google.devtools.build.lib.runtime.CommandEnvironment;
+import com.google.devtools.build.lib.runtime.commands.AqueryCommand;
 import com.google.devtools.build.lib.runtime.commands.QueryCommand;
+import com.google.devtools.build.lib.server.FailureDetails.ActionQuery.Code;
 import com.google.devtools.common.options.OptionsParser;
 import java.util.ArrayList;
 import org.junit.Before;
@@ -33,13 +37,13 @@ import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.junit.runners.JUnit4;
 
-/** Tests for aquery. */
+/** Integration tests for aquery. */
 @RunWith(JUnit4.class)
 public class AqueryBuildToolTest extends BuildIntegrationTestCase {
   private ImmutableMap<String, QueryFunction> functions;
 
   @Before
-  public final void setFunctions() throws Exception {
+  public final void setFunctions() {
     ImmutableMap.Builder<String, QueryFunction> builder = ImmutableMap.builder();
 
     for (QueryFunction queryFunction : ActionGraphQueryEnvironment.FUNCTIONS) {
@@ -51,6 +55,7 @@ public class AqueryBuildToolTest extends BuildIntegrationTestCase {
     }
 
     functions = builder.build();
+    runtimeWrapper.addOptionsClass(AqueryOptions.class);
   }
 
   @Test
@@ -75,5 +80,19 @@ public class AqueryBuildToolTest extends BuildIntegrationTestCase {
     AqueryActionFilterException thrown =
         assertThrows(AqueryActionFilterException.class, () -> new AqueryBuildTool(env, expr));
     assertThat(thrown).hasMessageThat().contains("Wrong query syntax:");
+  }
+
+  @Test
+  public void testAqueryBuildToolDumpActionGraphFromSkyframe_wrongOutputFormat_returnsFailure()
+      throws Exception {
+    addOptions("--output=text");
+    CommandEnvironment env = runtimeWrapper.newCommand(AqueryCommand.class);
+    AqueryBuildTool aqueryBuildTool = new AqueryBuildTool(env, null);
+    BlazeCommandResult result =
+        aqueryBuildTool.dumpActionGraphFromSkyframe(createNewRequest("aquery"));
+
+    assertThat(result.isSuccess()).isFalse();
+    assertThat(result.getDetailedExitCode().getFailureDetail().getActionQuery().getCode())
+        .isEqualTo(Code.SKYFRAME_STATE_PREREQ_UNMET);
   }
 }

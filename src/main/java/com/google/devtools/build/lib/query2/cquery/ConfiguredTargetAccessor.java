@@ -32,24 +32,23 @@ import com.google.devtools.build.lib.analysis.configuredtargets.RuleConfiguredTa
 import com.google.devtools.build.lib.cmdline.Label;
 import com.google.devtools.build.lib.packages.ConfiguredAttributeMapper;
 import com.google.devtools.build.lib.packages.ExecGroup;
-import com.google.devtools.build.lib.packages.NoSuchTargetException;
 import com.google.devtools.build.lib.packages.Rule;
 import com.google.devtools.build.lib.packages.Target;
 import com.google.devtools.build.lib.packages.TargetUtils;
 import com.google.devtools.build.lib.query2.engine.QueryEnvironment.TargetAccessor;
+import com.google.devtools.build.lib.query2.engine.QueryEnvironment.TargetNotFoundException;
 import com.google.devtools.build.lib.query2.engine.QueryException;
 import com.google.devtools.build.lib.query2.engine.QueryExpression;
 import com.google.devtools.build.lib.query2.engine.QueryVisibility;
+import com.google.devtools.build.lib.server.FailureDetails.ConfigurableQuery;
 import com.google.devtools.build.lib.skyframe.BuildConfigurationValue;
 import com.google.devtools.build.lib.skyframe.ConfiguredTargetKey;
 import com.google.devtools.build.lib.skyframe.ConfiguredTargetValue;
-import com.google.devtools.build.lib.skyframe.PackageValue;
 import com.google.devtools.build.lib.skyframe.ToolchainContextKey;
 import com.google.devtools.build.lib.skyframe.UnloadedToolchainContext;
 import com.google.devtools.build.skyframe.WalkableGraph;
 import java.util.List;
 import java.util.Map;
-import java.util.Set;
 import javax.annotation.Nullable;
 
 /**
@@ -109,28 +108,31 @@ public class ConfiguredTargetAccessor implements TargetAccessor<ConfiguredTarget
       String attrName,
       String errorMsgPrefix)
       throws QueryException, InterruptedException {
+    ConfiguredTarget actualConfiguredTarget = configuredTarget.getActual();
+
     Preconditions.checkArgument(
-        isRule(configuredTarget),
+        isRule(actualConfiguredTarget),
         "%s %s is not a rule configured target",
         errorMsgPrefix,
-        getLabel(configuredTarget));
+        getLabel(actualConfiguredTarget));
 
     Multimap<Label, ConfiguredTarget> depsByLabel =
         Multimaps.index(
-            queryEnvironment.getFwdDeps(ImmutableList.of(configuredTarget)),
+            queryEnvironment.getFwdDeps(ImmutableList.of(actualConfiguredTarget)),
             ConfiguredTarget::getLabel);
 
-    Rule rule = (Rule) getTargetFromConfiguredTarget(configuredTarget);
+    Rule rule = (Rule) getTargetFromConfiguredTarget(actualConfiguredTarget);
     ImmutableMap<Label, ConfigMatchingProvider> configConditions =
-        ((RuleConfiguredTarget) configuredTarget).getConfigConditions();
+        actualConfiguredTarget.getConfigConditions();
     ConfiguredAttributeMapper attributeMapper =
         ConfiguredAttributeMapper.of(rule, configConditions);
     if (!attributeMapper.has(attrName)) {
       throw new QueryException(
           caller,
           String.format(
-              "%s %s of type %s does not have attribute '%s'",
-              errorMsgPrefix, configuredTarget, rule.getRuleClass(), attrName));
+              "%sconfigured target of type %s does not have attribute '%s'",
+              errorMsgPrefix, rule.getRuleClass(), attrName),
+          ConfigurableQuery.Code.ATTRIBUTE_MISSING);
     }
     ImmutableList.Builder<ConfiguredTarget> toReturn = ImmutableList.builder();
     attributeMapper.visitLabels(attributeMapper.getAttributeDefinition(attrName)).stream()
@@ -157,32 +159,24 @@ public class ConfiguredTargetAccessor implements TargetAccessor<ConfiguredTarget
   }
 
   @Override
-  public Set<QueryVisibility<ConfiguredTarget>> getVisibility(ConfiguredTarget from)
-      throws QueryException, InterruptedException {
+  public ImmutableSet<QueryVisibility<ConfiguredTarget>> getVisibility(
+      QueryExpression caller, ConfiguredTarget from) throws QueryException {
     // TODO(bazel-team): implement this if needed.
-    throw new QueryException("visible() is not supported on configured targets");
+    throw new QueryException(
+        "visible() is not supported on configured targets",
+        ConfigurableQuery.Code.VISIBLE_FUNCTION_NOT_SUPPORTED);
   }
 
   public Target getTargetFromConfiguredTarget(ConfiguredTarget configuredTarget) {
-    return getTargetFromConfiguredTarget(configuredTarget, walkableGraph);
-  }
-
-  public static Target getTargetFromConfiguredTarget(
-      ConfiguredTarget configuredTarget, WalkableGraph walkableGraph) {
-    Target target = null;
+    // Dereference any aliases that might be present.
+    Label label = configuredTarget.getOriginalLabel();
     try {
-      // Dereference any aliases that might be present.
-      Label label = configuredTarget.getOriginalLabel();
-      target =
-          ((PackageValue) walkableGraph.getValue(PackageValue.key(label.getPackageIdentifier())))
-              .getPackage()
-              .getTarget(label.getName());
-    } catch (NoSuchTargetException e) {
+      return queryEnvironment.getTarget(label);
+    } catch (InterruptedException e) {
+      throw new IllegalStateException("Thread interrupted in the middle of getting a Target.", e);
+    } catch (TargetNotFoundException e) {
       throw new IllegalStateException("Unable to get target from package in accessor.", e);
-    } catch (InterruptedException e2) {
-      throw new IllegalStateException("Thread interrupted in the middle of getting a Target.", e2);
     }
-    return target;
   }
 
   /** Returns the rule that generates the given output file. */
@@ -191,9 +185,10 @@ public class ConfiguredTargetAccessor implements TargetAccessor<ConfiguredTarget
     return (RuleConfiguredTarget)
         ((ConfiguredTargetValue)
                 walkableGraph.getValue(
-                    ConfiguredTargetKey.of(
-                        oct.getGeneratingRule().getLabel(),
-                        queryEnvironment.getConfiguration(oct))))
+                    ConfiguredTargetKey.builder()
+                        .setLabel(oct.getGeneratingRule().getLabel())
+                        .setConfiguration(queryEnvironment.getConfiguration(oct))
+                        .build()))
             .getConfiguredTarget();
   }
 
@@ -222,7 +217,8 @@ public class ConfiguredTargetAccessor implements TargetAccessor<ConfiguredTarget
     ImmutableMap<String, ExecGroup> execGroups = rule.getRuleClassObject().getExecGroups();
 
     ToolchainCollection.Builder<UnloadedToolchainContext> toolchainContexts =
-        new ToolchainCollection.Builder<>();
+        ToolchainCollection.builder();
+    BuildConfigurationValue.Key configurationKey = BuildConfigurationValue.key(config);
     try {
       for (Map.Entry<String, ExecGroup> group : execGroups.entrySet()) {
         ExecGroup execGroup = group.getValue();
@@ -230,9 +226,9 @@ public class ConfiguredTargetAccessor implements TargetAccessor<ConfiguredTarget
             (UnloadedToolchainContext)
                 walkableGraph.getValue(
                     ToolchainContextKey.key()
-                        .configurationKey(BuildConfigurationValue.key(config))
-                        .requiredToolchainTypeLabels(execGroup.getRequiredToolchains())
-                        .execConstraintLabels(execGroup.getExecutionPlatformConstraints())
+                        .configurationKey(configurationKey)
+                        .requiredToolchainTypeLabels(execGroup.requiredToolchains())
+                        .execConstraintLabels(execGroup.execCompatibleWith())
                         .build());
         if (context == null) {
           return null;
@@ -243,7 +239,7 @@ public class ConfiguredTargetAccessor implements TargetAccessor<ConfiguredTarget
           (UnloadedToolchainContext)
               walkableGraph.getValue(
                   ToolchainContextKey.key()
-                      .configurationKey(BuildConfigurationValue.key(config))
+                      .configurationKey(configurationKey)
                       .requiredToolchainTypeLabels(requiredToolchains)
                       .execConstraintLabels(execConstraintLabels)
                       .build());

@@ -20,24 +20,26 @@ import com.google.common.base.Preconditions;
 import com.google.common.base.Strings;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
-import com.google.common.collect.ImmutableSet;
 import com.google.devtools.build.lib.analysis.config.BuildOptions;
-import com.google.devtools.build.lib.analysis.config.ConfigurationFragmentFactory;
 import com.google.devtools.build.lib.analysis.config.CoreOptions;
 import com.google.devtools.build.lib.analysis.config.Fragment;
-import com.google.devtools.build.lib.analysis.config.FragmentOptions;
-import com.google.devtools.build.lib.analysis.skylark.annotations.StarlarkConfigurationField;
+import com.google.devtools.build.lib.analysis.config.RequiresOptions;
+import com.google.devtools.build.lib.analysis.starlark.annotations.StarlarkConfigurationField;
 import com.google.devtools.build.lib.cmdline.Label;
 import com.google.devtools.build.lib.concurrent.ThreadSafety.Immutable;
 import com.google.devtools.build.lib.rules.apple.AppleCommandLineOptions.AppleBitcodeMode;
 import com.google.devtools.build.lib.rules.apple.ApplePlatform.PlatformType;
-import com.google.devtools.build.lib.skylarkbuildapi.apple.AppleConfigurationApi;
+import com.google.devtools.build.lib.starlarkbuildapi.apple.AppleConfigurationApi;
 import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.EnumMap;
 import java.util.List;
+import java.util.Map;
 import javax.annotation.Nullable;
 
 /** A configuration containing flags required for Apple platforms and tools. */
 @Immutable
+@RequiresOptions(options = {AppleCommandLineOptions.class})
 public class AppleConfiguration extends Fragment implements AppleConfigurationApi<PlatformType> {
   /**
    * Environment variable name for the xcode version. The value of this environment variable should
@@ -70,14 +72,16 @@ public class AppleConfiguration extends Fragment implements AppleConfigurationAp
   private final ImmutableList<String> watchosCpus;
   private final ImmutableList<String> tvosCpus;
   private final ImmutableList<String> macosCpus;
-  private final AppleBitcodeMode bitcodeMode;
+  private final ImmutableList<String> catalystCpus;
+  private final EnumMap<ApplePlatform.PlatformType, AppleBitcodeMode> platformBitcodeModes;
   private final Label xcodeConfigLabel;
   private final AppleCommandLineOptions options;
-  @Nullable private final Label defaultProvisioningProfileLabel;
   private final boolean mandatoryMinimumVersion;
   private final boolean objcProviderFromLinked;
 
-  private AppleConfiguration(AppleCommandLineOptions options, String iosCpu) {
+  public AppleConfiguration(BuildOptions buildOptions) {
+    AppleCommandLineOptions options = buildOptions.get(AppleCommandLineOptions.class);
+    String iosCpu = iosCpuFromCpu(buildOptions.get(CoreOptions.class).cpu);
     this.options = options;
     this.iosCpu = iosCpu;
     this.appleSplitCpu = Preconditions.checkNotNull(options.appleSplitCpu, "appleSplitCpu");
@@ -95,10 +99,13 @@ public class AppleConfiguration extends Fragment implements AppleConfigurationAp
     this.macosCpus = (options.macosCpus == null || options.macosCpus.isEmpty())
         ? ImmutableList.of(AppleCommandLineOptions.DEFAULT_MACOS_CPU)
         : ImmutableList.copyOf(options.macosCpus);
-    this.bitcodeMode = options.appleBitcodeMode;
+    this.catalystCpus =
+        (options.catalystCpus == null || options.catalystCpus.isEmpty())
+            ? ImmutableList.of(AppleCommandLineOptions.DEFAULT_CATALYST_CPU)
+            : ImmutableList.copyOf(options.catalystCpus);
+    this.platformBitcodeModes = collectBitcodeModes(options.appleBitcodeMode);
     this.xcodeConfigLabel =
         Preconditions.checkNotNull(options.xcodeVersionConfig, "xcodeConfigLabel");
-    this.defaultProvisioningProfileLabel = options.defaultProvisioningProfile;
     this.mandatoryMinimumVersion = options.mandatoryMinimumVersion;
     this.objcProviderFromLinked = options.objcProviderFromLinked;
   }
@@ -193,6 +200,8 @@ public class AppleConfiguration extends Fragment implements AppleConfigurationAp
         return tvosCpus.get(0);
       case MACOS:
         return macosCpus.get(0);
+      case CATALYST:
+        return catalystCpus.get(0);
       default:
         throw new IllegalArgumentException("Unhandled platform type " + applePlatformType);
     }
@@ -238,6 +247,8 @@ public class AppleConfiguration extends Fragment implements AppleConfigurationAp
         return tvosCpus;
       case MACOS:
         return macosCpus;
+      case CATALYST:
+        return catalystCpus;
       default:
         throw new IllegalArgumentException("Unhandled platform type " + platformType);
     }
@@ -294,6 +305,8 @@ public class AppleConfiguration extends Fragment implements AppleConfigurationAp
         return ApplePlatform.TVOS_SIMULATOR;
       case MACOS:
         return ApplePlatform.MACOS;
+      case CATALYST:
+        return ApplePlatform.CATALYST;
       default:
         throw new IllegalArgumentException("Unsupported platform type " + platformType);
     }
@@ -338,15 +351,6 @@ public class AppleConfiguration extends Fragment implements AppleConfigurationAp
   }
 
   /**
-   * Returns the label of the default provisioning profile to use when bundling/signing an ios
-   * application. Returns null if the target platform is not an iOS device (for example, if
-   * iOS simulator is being targeted).
-   */
-  @Nullable public Label getDefaultProvisioningProfileLabel() {
-    return defaultProvisioningProfileLabel;
-  }
-
-  /**
    * Returns the bitcode mode to use for compilation steps. This should only be invoked in
    * single-architecture contexts.
    *
@@ -357,11 +361,13 @@ public class AppleConfiguration extends Fragment implements AppleConfigurationAp
    */
   @Override
   public AppleBitcodeMode getBitcodeMode() {
-    if (hasValidSingleArchPlatform() && getSingleArchPlatform().isDevice()) {
-      return bitcodeMode;
-    } else {
-      return AppleBitcodeMode.NONE;
+    if (hasValidSingleArchPlatform()) {
+      ApplePlatform platform = getSingleArchPlatform();
+      if (platform.isDevice()) {
+        return platformBitcodeModes.get(applePlatformType);
+      }
     }
+    return AppleBitcodeMode.NONE;
   }
 
   /**
@@ -428,32 +434,33 @@ public class AppleConfiguration extends Fragment implements AppleConfigurationAp
     return options.hashCode();
   }
 
-  @VisibleForTesting
-  static AppleConfiguration create(AppleCommandLineOptions appleOptions, String cpu) {
-    return new AppleConfiguration(appleOptions, iosCpuFromCpu(cpu));
-  }
-
   /**
-   * Loads {@link AppleConfiguration} from build options.
+   * Compute the platform-type-to-bitcode-mode mapping from the pairs that were passed on the
+   * command line.
    */
-  public static class Loader implements ConfigurationFragmentFactory {
-    @Override
-    public AppleConfiguration create(BuildOptions buildOptions) {
-      AppleCommandLineOptions appleOptions = buildOptions.get(AppleCommandLineOptions.class);
-      String cpu = buildOptions.get(CoreOptions.class).cpu;
-      return AppleConfiguration.create(appleOptions, cpu);
+  private static EnumMap<ApplePlatform.PlatformType, AppleBitcodeMode> collectBitcodeModes(
+      List<Map.Entry<ApplePlatform.PlatformType, AppleBitcodeMode>> platformModeMappings) {
+    EnumMap<ApplePlatform.PlatformType, AppleBitcodeMode> modes =
+        new EnumMap<>(ApplePlatform.PlatformType.class);
+    ApplePlatform.PlatformType[] allPlatforms = ApplePlatform.PlatformType.values();
+
+    // Seed the map with the default mode for every key so that there is a valid mode for every
+    // platform.
+    // TODO(blaze-team): Default to embedded_markers when fully implemented.
+    Arrays.stream(allPlatforms).forEach(platform -> modes.put(platform, AppleBitcodeMode.NONE));
+
+    // Process the entries in order. If we encounter one with a null key, apply the mode to all
+    // platforms; otherwise, apply it only to that specific platform. This ensures that the later
+    // options override the earlier options.
+    for (Map.Entry<ApplePlatform.PlatformType, AppleBitcodeMode> entry : platformModeMappings) {
+      if (entry.getKey() == null) {
+        Arrays.stream(allPlatforms).forEach(platform -> modes.put(platform, entry.getValue()));
+      } else {
+        modes.put(entry.getKey(), entry.getValue());
+      }
     }
 
-    @Override
-    public Class<? extends Fragment> creates() {
-      return AppleConfiguration.class;
-    }
-
-    @Override
-    public ImmutableSet<Class<? extends FragmentOptions>> requiredOptions() {
-      return ImmutableSet.<Class<? extends FragmentOptions>>of(AppleCommandLineOptions.class);
-    }
-
+    return modes;
   }
 
   /**
@@ -470,6 +477,8 @@ public class AppleConfiguration extends Fragment implements AppleConfigurationAp
     APPLEBIN_TVOS("applebin_tvos"),
     /** Distinguisher for {@code apple_binary} rule with "macos" platform_type. */
     APPLEBIN_MACOS("applebin_macos"),
+    /** Distinguisher for {@code apple_binary} rule with "catalyst" platform_type. */
+    APPLEBIN_CATALYST("applebin_catalyst"),
 
     /**
      * Distinguisher for the apple crosstool configuration.  We use "apl" for output directory

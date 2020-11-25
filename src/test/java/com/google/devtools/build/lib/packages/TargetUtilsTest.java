@@ -18,10 +18,9 @@ import static com.google.common.truth.Truth.assertThat;
 import com.google.common.base.Predicate;
 import com.google.common.collect.Lists;
 import com.google.devtools.build.lib.packages.util.PackageLoadingTestCase;
-import com.google.devtools.build.lib.syntax.Dict;
-import com.google.devtools.build.lib.syntax.Mutability;
-import com.google.devtools.build.lib.syntax.Starlark;
 import java.util.Map;
+import net.starlark.java.eval.Dict;
+import net.starlark.java.eval.Starlark;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.junit.runners.JUnit4;
@@ -191,24 +190,46 @@ public class TargetUtilsTest extends PackageLoadingTestCase {
   }
 
   @Test
-  public void testFilteredExecutionInfo_FromUncheckedExecRequirements() throws Exception {
+  public void testFilteredExecutionInfo_fromUncheckedExecRequirements() throws Exception {
     scratch.file("tests/BUILD", "sh_binary(name = 'no-tag', srcs=['sh.sh'])");
 
     Rule noTag = (Rule) getTarget("//tests:no-tag");
 
     Map<String, String> execInfo =
         TargetUtils.getFilteredExecutionInfo(
-            Dict.of((Mutability) null, "supports-worker", "1"),
+            Dict.<String, String>builder().put("supports-worker", "1").buildImmutable(),
             noTag, /* allowTagsPropagation */
             true);
     assertThat(execInfo).containsExactly("supports-worker", "1");
 
     execInfo =
         TargetUtils.getFilteredExecutionInfo(
-            Dict.of((Mutability) null, "some-custom-tag", "1", "no-cache", "1"),
+            Dict.<String, String>builder()
+                .put("some-custom-tag", "1")
+                .put("no-cache", "1")
+                .buildImmutable(),
             noTag,
             /* allowTagsPropagation */ true);
     assertThat(execInfo).containsExactly("no-cache", "1");
+  }
+
+  @Test
+  public void testFilteredExecutionInfo_fromUncheckedExecRequirements_withWorkerKeyMnemonic()
+      throws Exception {
+    scratch.file("tests/BUILD", "sh_binary(name = 'no-tag', srcs=['sh.sh'])");
+
+    Rule noTag = (Rule) getTarget("//tests:no-tag");
+
+    Map<String, String> execInfo =
+        TargetUtils.getFilteredExecutionInfo(
+            Dict.<String, String>builder()
+                .put("supports-workers", "1")
+                .put("worker-key-mnemonic", "MyMnemonic")
+                .buildImmutable(),
+            noTag, /* allowTagsPropagation */
+            true);
+    assertThat(execInfo)
+        .containsExactly("supports-workers", "1", "worker-key-mnemonic", "MyMnemonic");
   }
 
   @Test
@@ -218,7 +239,7 @@ public class TargetUtilsTest extends PackageLoadingTestCase {
         "sh_binary(name = 'tag1', srcs=['sh.sh'], tags=['supports-workers', 'no-cache'])");
     Rule tag1 = (Rule) getTarget("//tests:tag1");
     Dict<String, String> executionRequirementsUnchecked =
-        Dict.of((Mutability) null, "no-remote", "1");
+        Dict.<String, String>builder().put("no-remote", "1").buildImmutable();
 
     Map<String, String> execInfo =
         TargetUtils.getFilteredExecutionInfo(
@@ -234,7 +255,7 @@ public class TargetUtilsTest extends PackageLoadingTestCase {
         "sh_binary(name = 'tag1', srcs=['sh.sh'], tags=['supports-workers', 'no-cache'])");
     Rule tag1 = (Rule) getTarget("//tests:tag1");
     Dict<String, String> executionRequirementsUnchecked =
-        Dict.of((Mutability) null, "no-cache", "1");
+        Dict.<String, String>builder().put("no-cache", "1").buildImmutable();
 
     Map<String, String> execInfo =
         TargetUtils.getFilteredExecutionInfo(
@@ -244,7 +265,7 @@ public class TargetUtilsTest extends PackageLoadingTestCase {
   }
 
   @Test
-  public void testFilteredExecutionInfo_WithNullUncheckedExecRequirements() throws Exception {
+  public void testFilteredExecutionInfo_withNullUncheckedExecRequirements() throws Exception {
     scratch.file(
         "tests/BUILD",
         "sh_binary(name = 'tag1', srcs=['sh.sh'], tags=['supports-workers', 'no-cache'])");
@@ -260,14 +281,14 @@ public class TargetUtilsTest extends PackageLoadingTestCase {
   }
 
   @Test
-  public void testFilteredExecutionInfoWhenIncompatibleFlagDisabled() throws Exception {
+  public void testFilteredExecutionInfo_whenIncompatibleFlagDisabled() throws Exception {
     // when --incompatible_allow_tags_propagation=false
     scratch.file(
         "tests/BUILD",
         "sh_binary(name = 'tag1', srcs=['sh.sh'], tags=['supports-workers', 'no-cache'])");
     Rule tag1 = (Rule) getTarget("//tests:tag1");
     Dict<String, String> executionRequirementsUnchecked =
-        Dict.of((Mutability) null, "no-remote", "1");
+        Dict.<String, String>builder().put("no-remote", "1").buildImmutable();
 
     Map<String, String> execInfo =
         TargetUtils.getFilteredExecutionInfo(

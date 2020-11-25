@@ -23,6 +23,8 @@ import com.google.common.collect.MultimapBuilder;
 import com.google.devtools.build.lib.analysis.AliasProvider;
 import com.google.devtools.build.lib.analysis.ConfiguredTarget;
 import com.google.devtools.build.lib.analysis.config.BuildConfiguration;
+import com.google.devtools.build.lib.analysis.test.TestProvider;
+import com.google.devtools.build.lib.analysis.test.TestProvider.TestParams;
 import com.google.devtools.build.lib.buildeventstream.BuildEvent.LocalFile.LocalFileType;
 import com.google.devtools.build.lib.buildeventstream.BuildEventContext;
 import com.google.devtools.build.lib.buildeventstream.BuildEventIdUtil;
@@ -128,6 +130,12 @@ public class TestSummary implements Comparable<TestSummary>, BuildEventWithOrder
     public Builder setStatus(BlazeTestStatus status) {
       checkMutation(status);
       summary.status = status;
+      return this;
+    }
+
+    public Builder setSkipped(boolean skipped) {
+      checkMutation(skipped);
+      summary.skipped = skipped;
       return this;
     }
 
@@ -340,6 +348,7 @@ public class TestSummary implements Comparable<TestSummary>, BuildEventWithOrder
   private ConfiguredTarget target;
   private BuildConfiguration configuration;
   private BlazeTestStatus status;
+  private boolean skipped;
   // Currently only populated if --runs_per_test_detects_flakes is enabled.
   private Multimap<Integer, BlazeTestStatus> shardRunStatuses = ArrayListMultimap.create();
   private int numCached;
@@ -385,6 +394,10 @@ public class TestSummary implements Comparable<TestSummary>, BuildEventWithOrder
 
   public BlazeTestStatus getStatus() {
     return status;
+  }
+
+  public boolean isSkipped() {
+    return skipped;
   }
 
   /**
@@ -523,7 +536,10 @@ public class TestSummary implements Comparable<TestSummary>, BuildEventWithOrder
     return lastStopTimeMillis;
   }
 
-  static Mode getStatusMode(BlazeTestStatus status) {
+  Mode getStatusMode() {
+    if (skipped) {
+      return Mode.WARNING;
+    }
     return status == BlazeTestStatus.PASSED
         ? Mode.INFO
         : (status == BlazeTestStatus.FLAKY ? Mode.WARNING : Mode.ERROR);
@@ -564,11 +580,14 @@ public class TestSummary implements Comparable<TestSummary>, BuildEventWithOrder
   @Override
   public BuildEventStreamProtos.BuildEvent asStreamProto(BuildEventContext converters) {
     PathConverter pathConverter = converters.pathConverter();
+    TestParams testParams = target.getProvider(TestProvider.class).getTestParams();
     BuildEventStreamProtos.TestSummary.Builder summaryBuilder =
         BuildEventStreamProtos.TestSummary.newBuilder()
             .setOverallStatus(BuildEventStreamerUtils.bepStatus(status))
             .setTotalNumCached(getNumCached())
             .setTotalRunCount(totalRuns())
+            .setRunCount(testParams.getRuns())
+            .setShardCount(testParams.getShards())
             .setFirstStartTimeMillis(firstStartTimeMillis)
             .setLastStopTimeMillis(lastStopTimeMillis)
             .setTotalRunDurationMillis(totalRunDurationMillis);

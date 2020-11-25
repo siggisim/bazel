@@ -93,7 +93,8 @@ public abstract class AbstractAndroidLocalTestTestBase extends AndroidBuildViewT
   @Test
   public void testFeatureFlagsAttributeSetsSelectInDependency() throws Exception {
     useConfiguration(
-        "--experimental_dynamic_configs=on",
+        // TODO(b/173547615): Re-enable this flag or delete.
+        // "--experimental_dynamic_configs=on",
         "--enforce_transitive_configs_for_config_feature_flag");
     writeFile(
         "java/com/foo/BUILD",
@@ -150,7 +151,8 @@ public abstract class AbstractAndroidLocalTestTestBase extends AndroidBuildViewT
   @Test
   public void testFeatureFlagsAttributeSetsSelectInTest() throws Exception {
     useConfiguration(
-        "--experimental_dynamic_configs=on",
+        // TODO(b/173547615): Re-enable this flag or delete.
+        // "--experimental_dynamic_configs=on",
         "--enforce_transitive_configs_for_config_feature_flag");
     writeFile(
         "java/com/foo/BUILD",
@@ -192,8 +194,8 @@ public abstract class AbstractAndroidLocalTestTestBase extends AndroidBuildViewT
         ")");
     ConfiguredTarget binary = getConfiguredTarget("//java/com/foo");
     List<String> inputs =
-        actionsTestUtil()
-            .prettyArtifactNames(actionsTestUtil().artifactClosureOf(getFilesToBuild(binary)));
+        ActionsTestUtil.prettyArtifactNames(
+            actionsTestUtil().artifactClosureOf(getFilesToBuild(binary)));
 
     assertThat(inputs).containsAtLeast("java/com/foo/Flag1On.java", "java/com/foo/Flag2Off.java");
     assertThat(inputs).containsNoneOf("java/com/foo/Flag1Off.java", "java/com/foo/Flag2On.java");
@@ -203,7 +205,8 @@ public abstract class AbstractAndroidLocalTestTestBase extends AndroidBuildViewT
   public void testFeatureFlagsAttributeFailsAnalysisIfFlagValueIsInvalid() throws Exception {
     reporter.removeHandler(failFastHandler);
     useConfiguration(
-        "--experimental_dynamic_configs=on",
+        // TODO(b/173547615): Re-enable this flag or delete.
+        // "--experimental_dynamic_configs=on",
         "--enforce_transitive_configs_for_config_feature_flag");
     writeFile(
         "java/com/foo/BUILD",
@@ -246,7 +249,10 @@ public abstract class AbstractAndroidLocalTestTestBase extends AndroidBuildViewT
       throws Exception {
     reporter.removeHandler(failFastHandler);
     useConfiguration(
-        "--experimental_dynamic_configs=on",
+        // TODO(b/173547615): Re-enable this flag or delete. (Unlike the other cases in this file,
+        // this test does not fail when this flag is uncommented. But should it be deleted anyway if
+        // it's not relevant to the test?)
+        // "--experimental_dynamic_configs=on",
         "--enforce_transitive_configs_for_config_feature_flag");
     writeFile(
         "java/com/foo/BUILD",
@@ -277,7 +283,8 @@ public abstract class AbstractAndroidLocalTestTestBase extends AndroidBuildViewT
   @Test
   public void testFeatureFlagsAttributeSetsFeatureFlagProviderValues() throws Exception {
     useConfiguration(
-        "--experimental_dynamic_configs=on",
+        // TODO(b/173547615): Re-enable this flag or delete.
+        // "--experimental_dynamic_configs=on",
         "--enforce_transitive_configs_for_config_feature_flag");
     writeFile(
         "java/com/foo/reader.bzl",
@@ -335,7 +342,8 @@ public abstract class AbstractAndroidLocalTestTestBase extends AndroidBuildViewT
   public void testFeatureFlagsAttributeFailsAnalysisIfFlagIsAliased() throws Exception {
     reporter.removeHandler(failFastHandler);
     useConfiguration(
-        "--experimental_dynamic_configs=on",
+        // TODO(b/173547615): Re-enable this flag or delete.
+        // "--experimental_dynamic_configs=on",
         "--enforce_transitive_configs_for_config_feature_flag");
     writeFile(
         "java/com/foo/BUILD",
@@ -373,7 +381,7 @@ public abstract class AbstractAndroidLocalTestTestBase extends AndroidBuildViewT
     reporter.removeHandler(failFastHandler); // expecting an error
     useConfiguration("--enforce_transitive_configs_for_config_feature_flag");
     overwriteFile(
-        "tools/whitelists/config_feature_flag/BUILD",
+        "tools/allowlists/config_feature_flag/BUILD",
         "package_group(",
         "    name = 'config_feature_flag',",
         "    packages = ['//flag'])");
@@ -410,7 +418,7 @@ public abstract class AbstractAndroidLocalTestTestBase extends AndroidBuildViewT
   public void testFeatureFlagPolicyDoesNotBlockRuleIfInPolicy() throws Exception {
     useConfiguration("--enforce_transitive_configs_for_config_feature_flag");
     overwriteFile(
-        "tools/whitelists/config_feature_flag/BUILD",
+        "tools/allowlists/config_feature_flag/BUILD",
         "package_group(",
         "    name = 'config_feature_flag',",
         "    packages = ['//flag', '//java/com/google/android/foo'])");
@@ -441,7 +449,7 @@ public abstract class AbstractAndroidLocalTestTestBase extends AndroidBuildViewT
   @Test
   public void testFeatureFlagPolicyIsNotUsedIfFlagValuesNotUsed() throws Exception {
     overwriteFile(
-        "tools/whitelists/config_feature_flag/BUILD",
+        "tools/allowlists/config_feature_flag/BUILD",
         "package_group(",
         "    name = 'config_feature_flag',",
         "    packages = ['*super* busted package group'])");
@@ -454,9 +462,9 @@ public abstract class AbstractAndroidLocalTestTestBase extends AndroidBuildViewT
     assertThat(getConfiguredTarget("//java/com/google/android/foo:foo")).isNotNull();
     // the package_group is busted, so we would have failed to get this far if we depended on it
     assertNoEvents();
-    // sanity check time: does this test actually test what we're testing for?
+    // NOTE: someone should verify that this test actually does what we think it does.
     reporter.removeHandler(failFastHandler);
-    assertThat(getConfiguredTarget("//tools/whitelists/config_feature_flag:config_feature_flag"))
+    assertThat(getConfiguredTarget("//tools/allowlists/config_feature_flag:config_feature_flag"))
         .isNull();
     assertContainsEvent("*super* busted package group");
   }

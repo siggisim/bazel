@@ -14,30 +14,42 @@
 
 package com.google.devtools.build.lib.packages;
 
+import com.google.auto.value.AutoValue;
 import com.google.common.collect.ImmutableSet;
 import com.google.devtools.build.lib.cmdline.Label;
-import com.google.devtools.build.lib.skylarkbuildapi.ExecGroupApi;
+import com.google.devtools.build.lib.starlarkbuildapi.ExecGroupApi;
 import java.util.Set;
 
-/**
- * Resolves the appropriate toolchains for the given parameters.
- *
- * <p>Currently just a stub.
- */
-public class ExecGroup implements ExecGroupApi {
-  private final ImmutableSet<Label> requiredToolchains;
-  private final ImmutableSet<Label> execCompatibleWith;
+/** Resolves the appropriate toolchains for the given parameters. */
+@AutoValue
+public abstract class ExecGroup implements ExecGroupApi {
 
-  public ExecGroup(Set<Label> requiredToolchains, Set<Label> execCompatibleWith) {
-    this.requiredToolchains = ImmutableSet.copyOf(requiredToolchains);
-    this.execCompatibleWith = ImmutableSet.copyOf(execCompatibleWith);
+  // An exec group that inherits requirements from the rule.
+  public static final ExecGroup COPY_FROM_RULE_EXEC_GROUP =
+      createCopied(ImmutableSet.of(), ImmutableSet.of());
+
+  // Create an exec group that is marked as copying from the rule.
+  public static ExecGroup createCopied(
+      Set<Label> requiredToolchains, Set<Label> execCompatibleWith) {
+    return create(requiredToolchains, execCompatibleWith, /* copyFromRule= */ true);
   }
 
-  public ImmutableSet<Label> getRequiredToolchains() {
-    return requiredToolchains;
+  // Create an exec group.
+  public static ExecGroup create(Set<Label> requiredToolchains, Set<Label> execCompatibleWith) {
+    return create(requiredToolchains, execCompatibleWith, /* copyFromRule= */ false);
   }
 
-  public ImmutableSet<Label> getExecutionPlatformConstraints() {
-    return execCompatibleWith;
+  private static ExecGroup create(
+      Set<Label> requiredToolchains, Set<Label> execCompatibleWith, boolean copyFromRule) {
+    return new AutoValue_ExecGroup(
+        ImmutableSet.copyOf(requiredToolchains),
+        ImmutableSet.copyOf(execCompatibleWith),
+        copyFromRule);
   }
+
+  public abstract ImmutableSet<Label> requiredToolchains();
+
+  public abstract ImmutableSet<Label> execCompatibleWith();
+
+  public abstract boolean copyFromRule();
 }

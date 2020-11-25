@@ -20,6 +20,9 @@ import com.google.common.base.Predicates;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
 import com.google.devtools.build.lib.actions.ActionCacheChecker.Token;
+import com.google.devtools.build.lib.actions.Artifact.ArtifactExpander;
+import com.google.devtools.build.lib.actions.Artifact.SpecialArtifact;
+import com.google.devtools.build.lib.actions.Artifact.SpecialArtifactType;
 import com.google.devtools.build.lib.actions.cache.ActionCache;
 import com.google.devtools.build.lib.actions.cache.CompactPersistentActionCache;
 import com.google.devtools.build.lib.actions.cache.MetadataHandler;
@@ -38,15 +41,19 @@ import com.google.devtools.build.lib.collect.nestedset.Order;
 import com.google.devtools.build.lib.testutil.ManualClock;
 import com.google.devtools.build.lib.testutil.Scratch;
 import com.google.devtools.build.lib.util.Fingerprint;
+import com.google.devtools.build.lib.vfs.DigestHashFunction;
 import com.google.devtools.build.lib.vfs.FileSystem;
 import com.google.devtools.build.lib.vfs.FileSystemUtils;
 import com.google.devtools.build.lib.vfs.Path;
+import com.google.devtools.build.lib.vfs.PathFragment;
 import com.google.devtools.build.lib.vfs.Root;
+import com.google.devtools.build.lib.vfs.inmemoryfs.InMemoryFileSystem;
 import java.io.IOException;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Map;
 import java.util.Set;
+import javax.annotation.Nullable;
 import org.junit.After;
 import org.junit.Before;
 import org.junit.Test;
@@ -116,10 +123,17 @@ public class ActionCacheCheckerTest {
 
     Token token =
         cacheChecker.getTokenIfNeedToExecute(
-            action, null, clientEnv, null, metadataHandler, platform);
+            action,
+            /*resolvedCacheArtifacts=*/ null,
+            clientEnv,
+            /*handler=*/ null,
+            metadataHandler,
+            /*artifactExpander=*/ null,
+            platform);
     if (token != null) {
       // Real action execution would happen here.
-      cacheChecker.updateActionCache(action, token, metadataHandler, clientEnv, platform);
+      cacheChecker.updateActionCache(
+          action, token, metadataHandler, /*artifactExpander=*/ null, clientEnv, platform);
     }
   }
 
@@ -182,7 +196,10 @@ public class ActionCacheCheckerTest {
     Action action =
         new NullAction() {
           @Override
-          protected void computeKey(ActionKeyContext actionKeyContext, Fingerprint fp) {
+          protected void computeKey(
+              ActionKeyContext actionKeyContext,
+              @Nullable ArtifactExpander artifactExpander,
+              Fingerprint fp) {
             fp.addString("key1");
           }
         };
@@ -190,7 +207,10 @@ public class ActionCacheCheckerTest {
     action =
         new NullAction() {
           @Override
-          protected void computeKey(ActionKeyContext actionKeyContext, Fingerprint fp) {
+          protected void computeKey(
+              ActionKeyContext actionKeyContext,
+              @Nullable ArtifactExpander artifactExpander,
+              Fingerprint fp) {
             fp.addString("key2");
           }
         };
@@ -298,22 +318,22 @@ public class ActionCacheCheckerTest {
   }
 
   @Test
-  public void testMiddleman_NotCached() throws Exception {
+  public void testMiddleman_notCached() throws Exception {
     doTestNotCached(new NullMiddlemanAction(), MissReason.DIFFERENT_DEPS);
   }
 
   @Test
-  public void testMiddleman_Cached() throws Exception {
+  public void testMiddleman_cached() throws Exception {
     doTestCached(new NullMiddlemanAction(), MissReason.DIFFERENT_DEPS);
   }
 
   @Test
-  public void testMiddleman_CorruptedCacheEntry() throws Exception {
+  public void testMiddleman_corruptedCacheEntry() throws Exception {
     doTestCorruptedCacheEntry(new NullMiddlemanAction());
   }
 
   @Test
-  public void testMiddleman_DifferentFiles() throws Exception {
+  public void testMiddleman_differentFiles() throws Exception {
     Action action =
         new NullMiddlemanAction() {
           @Override
@@ -338,6 +358,31 @@ public class ActionCacheCheckerTest {
             .set(MissReason.DIFFERENT_DEPS, 1)
             .set(MissReason.DIFFERENT_FILES, 1)
             .build());
+  }
+
+  @Test
+  public void testDeletedConstantMetadataOutputCausesReexecution() throws Exception {
+    SpecialArtifact output =
+        new Artifact.SpecialArtifact(
+            ArtifactRoot.asDerivedRoot(
+                new InMemoryFileSystem(DigestHashFunction.SHA256).getPath("/output"), "bin"),
+            PathFragment.create("bin/dummy"),
+            ActionsTestUtil.NULL_ARTIFACT_OWNER,
+            SpecialArtifactType.CONSTANT_METADATA);
+    output.getPath().getParentDirectory().createDirectoryAndParents();
+    Action action = new NullAction(output);
+    runAction(action);
+    output.getPath().delete();
+    assertThat(
+            cacheChecker.getTokenIfNeedToExecute(
+                action,
+                null,
+                ImmutableMap.<String, String>of(),
+                null,
+                new FakeMetadataHandler(),
+                null,
+                ImmutableMap.<String, String>of()))
+        .isNotNull();
   }
 
   /** A {@link CompactPersistentActionCache} that allows injecting corruption for testing. */

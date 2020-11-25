@@ -17,11 +17,11 @@ import static com.google.common.collect.ImmutableMap.toImmutableMap;
 import static com.google.common.collect.ImmutableMultiset.toImmutableMultiset;
 import static com.google.common.truth.Truth.assertThat;
 
-import com.google.common.base.Optional;
 import com.google.common.base.Preconditions;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.ImmutableMultiset;
+import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.ImmutableSortedSet;
 import com.google.common.collect.Iterables;
 import com.google.common.eventbus.EventBus;
@@ -29,6 +29,7 @@ import com.google.devtools.build.lib.actions.Action;
 import com.google.devtools.build.lib.actions.ActionAnalysisMetadata;
 import com.google.devtools.build.lib.actions.ActionGraph;
 import com.google.devtools.build.lib.actions.ActionKeyContext;
+import com.google.devtools.build.lib.actions.ActionLookupKey;
 import com.google.devtools.build.lib.actions.ActionLookupValue;
 import com.google.devtools.build.lib.actions.Artifact;
 import com.google.devtools.build.lib.analysis.AnalysisOptions;
@@ -42,20 +43,18 @@ import com.google.devtools.build.lib.analysis.ServerDirectories;
 import com.google.devtools.build.lib.analysis.config.BuildConfiguration;
 import com.google.devtools.build.lib.analysis.config.BuildConfigurationCollection;
 import com.google.devtools.build.lib.analysis.config.BuildOptions;
-import com.google.devtools.build.lib.analysis.config.ConfigurationFragmentFactory;
 import com.google.devtools.build.lib.analysis.config.InvalidConfigurationException;
 import com.google.devtools.build.lib.analysis.configuredtargets.InputFileConfiguredTarget;
-import com.google.devtools.build.lib.analysis.skylark.StarlarkTransition;
+import com.google.devtools.build.lib.analysis.starlark.StarlarkTransition;
 import com.google.devtools.build.lib.buildtool.BuildRequestOptions;
 import com.google.devtools.build.lib.clock.BlazeClock;
 import com.google.devtools.build.lib.cmdline.Label;
 import com.google.devtools.build.lib.cmdline.LabelSyntaxException;
-import com.google.devtools.build.lib.cmdline.RepositoryName;
 import com.google.devtools.build.lib.exec.ExecutionOptions;
 import com.google.devtools.build.lib.packages.NativeAspectClass;
 import com.google.devtools.build.lib.packages.PackageFactory;
-import com.google.devtools.build.lib.packages.StarlarkSemanticsOptions;
 import com.google.devtools.build.lib.packages.Target;
+import com.google.devtools.build.lib.packages.semantics.BuildLanguageOptions;
 import com.google.devtools.build.lib.packages.util.MockToolsConfig;
 import com.google.devtools.build.lib.pkgcache.LoadingOptions;
 import com.google.devtools.build.lib.pkgcache.PackageManager;
@@ -81,13 +80,13 @@ import com.google.devtools.build.lib.util.io.TimestampGranularityMonitor;
 import com.google.devtools.build.lib.vfs.ModifiedFileSet;
 import com.google.devtools.build.lib.vfs.PathFragment;
 import com.google.devtools.build.lib.vfs.Root;
-import com.google.devtools.build.lib.vfs.RootedPath;
 import com.google.devtools.build.skyframe.SkyKey;
 import com.google.devtools.common.options.Options;
 import com.google.devtools.common.options.OptionsParser;
 import java.util.Arrays;
 import java.util.HashSet;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
 import org.junit.Before;
@@ -223,19 +222,17 @@ public abstract class AnalysisTestCase extends FoundationTestCase {
     skyframeExecutor.preparePackageLoading(
         pkgLocator,
         packageOptions,
-        Options.getDefaults(StarlarkSemanticsOptions.class),
+        Options.getDefaults(BuildLanguageOptions.class),
         UUID.randomUUID(),
-        ImmutableMap.<String, String>of(),
+        ImmutableMap.of(),
         new TimestampGranularityMonitor(BlazeClock.instance()));
-    skyframeExecutor.setActionEnv(ImmutableMap.<String, String>of());
+    skyframeExecutor.setActionEnv(ImmutableMap.of());
     skyframeExecutor.injectExtraPrecomputedValues(
         ImmutableList.of(
             PrecomputedValue.injected(
-                RepositoryDelegatorFunction.RESOLVED_FILE_INSTEAD_OF_WORKSPACE,
-                Optional.<RootedPath>absent()),
+                RepositoryDelegatorFunction.RESOLVED_FILE_INSTEAD_OF_WORKSPACE, Optional.empty()),
             PrecomputedValue.injected(
-                RepositoryDelegatorFunction.REPOSITORY_OVERRIDES,
-                ImmutableMap.<RepositoryName, PathFragment>of()),
+                RepositoryDelegatorFunction.REPOSITORY_OVERRIDES, ImmutableMap.of()),
             PrecomputedValue.injected(
                 RepositoryDelegatorFunction.DEPENDENCY_FOR_UNCONDITIONAL_FETCHING,
                 RepositoryDelegatorFunction.DONT_FETCH_UNCONDITIONALLY),
@@ -270,7 +267,7 @@ public abstract class AnalysisTestCase extends FoundationTestCase {
                     Arrays.asList(
                         ExecutionOptions.class,
                         PackageOptions.class,
-                        StarlarkSemanticsOptions.class,
+                        BuildLanguageOptions.class,
                         BuildRequestOptions.class,
                         AnalysisOptions.class,
                         KeepGoingOption.class,
@@ -337,12 +334,14 @@ public abstract class AnalysisTestCase extends FoundationTestCase {
     Preconditions.checkState(analysisResult != null, "You must run update() first!");
   }
 
-  /**
-   * Update the BuildView: syncs the package cache; loads and analyzes the given labels.
-   */
+  /** Update the BuildView: syncs the package cache; loads and analyzes the given labels. */
   protected AnalysisResult update(
-      EventBus eventBus, FlagBuilder config, ImmutableList<String> aspects, String... labels)
-          throws Exception {
+      EventBus eventBus,
+      FlagBuilder config,
+      ImmutableSet<String> explicitTargetPatterns,
+      ImmutableList<String> aspects,
+      String... labels)
+      throws Exception {
     Set<Flag> flags = config.flags;
 
     LoadingOptions loadingOptions = optionsParser.getOptions(LoadingOptions.class);
@@ -365,13 +364,13 @@ public abstract class AnalysisTestCase extends FoundationTestCase {
     packageOptions.showLoadingProgress = true;
     packageOptions.globbingThreads = 7;
 
-    StarlarkSemanticsOptions starlarkSemanticsOptions =
-        optionsParser.getOptions(StarlarkSemanticsOptions.class);
+    BuildLanguageOptions buildLanguageOptions =
+        optionsParser.getOptions(BuildLanguageOptions.class);
 
     skyframeExecutor.preparePackageLoading(
         pathPackageLocator,
         packageOptions,
-        starlarkSemanticsOptions,
+        buildLanguageOptions,
         UUID.randomUUID(),
         ImmutableMap.<String, String>of(),
         new TimestampGranularityMonitor(BlazeClock.instance()));
@@ -396,6 +395,7 @@ public abstract class AnalysisTestCase extends FoundationTestCase {
             loadingResult,
             buildOptions,
             multiCpu,
+            explicitTargetPatterns,
             aspects,
             viewOptions,
             keepGoing,
@@ -411,9 +411,16 @@ public abstract class AnalysisTestCase extends FoundationTestCase {
     return analysisResult;
   }
 
+  protected AnalysisResult update(
+      EventBus eventBus, FlagBuilder config, ImmutableList<String> aspects, String... labels)
+      throws Exception {
+    return update(
+        eventBus, config, /*explicitTargetPatterns=*/ ImmutableSet.<String>of(), aspects, labels);
+  }
+
   protected AnalysisResult update(EventBus eventBus, FlagBuilder config, String... labels)
       throws Exception {
-    return update(eventBus, config, /*aspects=*/ImmutableList.<String>of(), labels);
+    return update(eventBus, config, /*aspects=*/ ImmutableList.<String>of(), labels);
   }
 
   protected AnalysisResult update(FlagBuilder config, String... labels) throws Exception {
@@ -527,8 +534,11 @@ public abstract class AnalysisTestCase extends FoundationTestCase {
   protected Artifact getBinArtifact(String packageRelativePath, ConfiguredTarget owner)
       throws InterruptedException {
     Label label = owner.getLabel();
-    ActionLookupValue.ActionLookupKey actionLookupKey =
-        ConfiguredTargetKey.of(label, owner.getConfigurationKey(), /*isHostConfiguration=*/ false);
+    ActionLookupKey actionLookupKey =
+        ConfiguredTargetKey.builder()
+            .setLabel(label)
+            .setConfigurationKey(owner.getConfigurationKey())
+            .build();
     ActionLookupValue actionLookupValue;
     try {
       actionLookupValue =
@@ -550,9 +560,12 @@ public abstract class AnalysisTestCase extends FoundationTestCase {
         .getArtifactFactory()
         .getDerivedArtifact(
             label.getPackageFragment().getRelative(packageRelativePath),
-            getTargetConfiguration().getBinDirectory(label.getPackageIdentifier().getRepository()),
-            ConfiguredTargetKey.of(
-                owner, skyframeExecutor.getConfiguration(reporter, owner.getConfigurationKey())));
+            getTargetConfiguration().getBinDirectory(label.getRepository()),
+            ConfiguredTargetKey.builder()
+                .setConfiguredTarget(owner)
+                .setConfiguration(
+                    skyframeExecutor.getConfiguration(reporter, owner.getConfigurationKey()))
+                .build());
   }
 
   protected Set<SkyKey> getSkyframeEvaluatedTargetKeys() {
@@ -576,11 +589,6 @@ public abstract class AnalysisTestCase extends FoundationTestCase {
         expected.keySet().stream()
             .collect(toImmutableMap(label -> label, label -> actualSet.count(label)));
     assertThat(actual).containsExactlyEntriesIn(expected);
-  }
-
-  protected String getAnalysisError() {
-    ensureUpdateWasCalled();
-    return analysisResult.getError();
   }
 
   protected BuildViewForTesting getView() {
@@ -617,6 +625,8 @@ public abstract class AnalysisTestCase extends FoundationTestCase {
             TestAspects.ALL_ATTRIBUTES_WITH_TOOL_ASPECT,
             TestAspects.BAR_PROVIDER_ASPECT,
             TestAspects.EXTRA_ATTRIBUTE_ASPECT,
+            TestAspects.PACKAGE_GROUP_ATTRIBUTE_ASPECT,
+            TestAspects.COMPUTED_ATTRIBUTE_ASPECT,
             TestAspects.FOO_PROVIDER_ASPECT,
             TestAspects.ASPECT_REQUIRING_PROVIDER_SETS,
             TestAspects.WARNING_ASPECT,
@@ -643,18 +653,5 @@ public abstract class AnalysisTestCase extends FoundationTestCase {
 
     useRuleClassProvider(builder.build());
     update();
-  }
-
-  /**
-   * Makes custom configuration fragments available in tests.
-   */
-  protected final void setConfigFragmentsAvailableInTests(
-      ConfigurationFragmentFactory... factories) throws Exception {
-    ConfiguredRuleClassProvider.Builder builder = new ConfiguredRuleClassProvider.Builder();
-    TestRuleClassProvider.addStandardRules(builder);
-    for (ConfigurationFragmentFactory factory : factories) {
-      builder.addConfigurationFragment(factory);
-    }
-    useRuleClassProvider(builder.build());
   }
 }

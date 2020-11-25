@@ -18,9 +18,7 @@ import com.google.common.collect.Iterables;
 import com.google.devtools.build.lib.actions.ActionExecutionContext;
 import com.google.devtools.build.lib.actions.ActionExecutionContext.ShowSubcommands;
 import com.google.devtools.build.lib.actions.LocalHostCapacity;
-import com.google.devtools.build.lib.actions.ResourceSet;
 import com.google.devtools.build.lib.analysis.config.PerLabelOptions;
-import com.google.devtools.build.lib.cmdline.Label;
 import com.google.devtools.build.lib.util.OptionsUtils;
 import com.google.devtools.build.lib.util.RegexFilter;
 import com.google.devtools.build.lib.util.ResourceConverter;
@@ -32,14 +30,12 @@ import com.google.devtools.common.options.EnumConverter;
 import com.google.devtools.common.options.Option;
 import com.google.devtools.common.options.OptionDocumentationCategory;
 import com.google.devtools.common.options.OptionEffectTag;
-import com.google.devtools.common.options.OptionMetadataTag;
 import com.google.devtools.common.options.Options;
 import com.google.devtools.common.options.OptionsBase;
 import com.google.devtools.common.options.OptionsParsingException;
 import java.util.Collections;
 import java.util.List;
 import java.util.Map;
-import java.util.function.Predicate;
 
 /**
  * Options affecting the execution phase of a build.
@@ -128,9 +124,9 @@ public class ExecutionOptions extends OptionsBase {
       documentationCategory = OptionDocumentationCategory.LOGGING,
       effectTags = {OptionEffectTag.EXECUTION},
       help =
-          "Writes intermediate parameter files to output tree even when using remote action"
-              + " execution. Useful when debugging actions. This is implied by --subcommands,"
-              + " --verbose_failures, and --experimental_verbose_failures_filter.")
+          "Writes intermediate parameter files to output tree even when using "
+              + "remote action execution. Useful when debugging actions. "
+              + "This is implied by --subcommands and --verbose_failures.")
   public boolean materializeParamFiles;
 
   @Option(
@@ -142,13 +138,10 @@ public class ExecutionOptions extends OptionsBase {
   public boolean materializeParamFilesDirectly;
 
   public boolean shouldMaterializeParamFiles() {
-    // Implied by --subcommands and verbose_failures
+    // Implied by --subcommands and --verbose_failures
     return materializeParamFiles
         || showSubcommands != ActionExecutionContext.ShowSubcommands.FALSE
-        // Conservatively materialize params files if any failures may be verbose.
-        // TODO(janakr): Could try to thread action label through to here and only materialize for
-        //  those actions, but seems pretty gnarly.
-        || hasSomeVerboseFailures();
+        || verboseFailures;
   }
 
   @Option(
@@ -156,31 +149,8 @@ public class ExecutionOptions extends OptionsBase {
       defaultValue = "false",
       documentationCategory = OptionDocumentationCategory.LOGGING,
       effectTags = {OptionEffectTag.TERMINAL_OUTPUT},
-      help = "If any command fails, print out the full command line.")
+      help = "If a command fails, print out the full command line.")
   public boolean verboseFailures;
-
-  @Option(
-      name = "experimental_verbose_failures_filter",
-      defaultValue = "null",
-      converter = RegexFilter.RegexFilterConverter.class,
-      documentationCategory = OptionDocumentationCategory.LOGGING,
-      effectTags = {OptionEffectTag.TERMINAL_OUTPUT},
-      help =
-          "If a command fails, print out the full command line if its label matches the given"
-              + " regex filter.")
-  public RegexFilter verboseFailuresFilter;
-
-  public boolean hasSomeVerboseFailures() {
-    return verboseFailures || verboseFailuresFilter != null;
-  }
-
-  public Predicate<Label> getVerboseFailuresPredicate() {
-    return verboseFailures
-        ? l -> true
-        : verboseFailuresFilter == null
-            ? l -> false
-            : l -> l == null || verboseFailuresFilter.isIncluded(l.getCanonicalForm());
-  }
 
   @Option(
       name = "subcommands",
@@ -285,6 +255,22 @@ public class ExecutionOptions extends OptionsBase {
   public TestOutputFormat testOutput;
 
   @Option(
+      name = "max_test_output_bytes",
+      defaultValue = "-1",
+      documentationCategory = OptionDocumentationCategory.LOGGING,
+      effectTags = {
+        OptionEffectTag.TEST_RUNNER,
+        OptionEffectTag.TERMINAL_OUTPUT,
+        OptionEffectTag.EXECUTION
+      },
+      help =
+          "Specifies maximum per-test-log size that can be emitted when --test_summary is 'errors' "
+              + "or 'all'. Useful for avoiding overwhelming the output with excessively noisy test "
+              + "output. The test header is included in the log size. Negative values imply no "
+              + "limit. Output is all or nothing.")
+  public int maxTestOutputBytes;
+
+  @Option(
       name = "test_summary",
       defaultValue = "short",
       converter = TestSummaryFormat.Converter.class,
@@ -304,34 +290,6 @@ public class ExecutionOptions extends OptionsBase {
       effectTags = {OptionEffectTag.UNKNOWN},
       help = "This flag has no effect, and is deprecated")
   public boolean useResourceAutoSense;
-
-  @Option(
-      name = "local_resources",
-      defaultValue = "null",
-      documentationCategory = OptionDocumentationCategory.UNCATEGORIZED,
-      effectTags = {OptionEffectTag.UNKNOWN},
-      help =
-          "Deprecated by '--incompatible_remove_local_resources'. Please use "
-              + "'--local_ram_resources' and '--local_cpu_resources'",
-      deprecationWarning =
-          "--local_resources is deprecated. Please use"
-              + " --local_ram_resources and --local_cpu_resources instead.",
-      converter = ResourceSet.ResourceSetConverter.class)
-  public ResourceSet availableResources;
-
-  @Option(
-      name = "incompatible_remove_local_resources",
-      defaultValue = "true",
-      documentationCategory = OptionDocumentationCategory.EXECUTION_STRATEGY,
-      effectTags = {OptionEffectTag.EXECUTION},
-      metadataTags = {
-        OptionMetadataTag.INCOMPATIBLE_CHANGE,
-        OptionMetadataTag.TRIGGERED_BY_ALL_INCOMPATIBLE_CHANGES
-      },
-      help =
-          "Deprecate local_resources in favor of --local_ram_resources and "
-              + "--local_cpu_resources.")
-  public boolean removeLocalResources;
 
   @Option(
       name = "local_cpu_resources",

@@ -33,8 +33,9 @@ public class Sketches {
    * output files.
    */
   public static BigInteger computeActionKey(
-      ActionAnalysisMetadata action, ActionKeyContext keyContext) {
-    Hasher hasher = newHasher().putUnencodedChars(action.getKey(keyContext));
+      ActionAnalysisMetadata action, ActionKeyContext keyContext) throws InterruptedException {
+    Hasher hasher =
+        newHasher().putUnencodedChars(action.getKey(keyContext, /*artifactExpander=*/ null));
     for (Artifact output : action.getOutputs()) {
       hasher.putUnencodedChars(output.getExecPath().getPathString());
     }

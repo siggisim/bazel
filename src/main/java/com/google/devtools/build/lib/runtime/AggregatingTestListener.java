@@ -110,7 +110,11 @@ public class AggregatingTestListener {
         continue;
       }
       TestResultAggregator aggregator =
-          new TestResultAggregator(target, event.getConfigurationForTarget(target), policy);
+          new TestResultAggregator(
+              target,
+              event.getConfigurationForTarget(target),
+              policy,
+              event.getSkippedTests().contains(target));
       TestResultAggregator oldAggregator = aggregators.put(asKey(target), aggregator);
       Preconditions.checkState(
           oldAggregator == null, "target: %s, values: %s %s", target, oldAggregator, aggregator);
@@ -126,7 +130,10 @@ public class AggregatingTestListener {
   public void testEvent(TestResult result) {
     ActionOwner testOwner = result.getTestAction().getOwner();
     ConfiguredTargetKey configuredTargetKey =
-        ConfiguredTargetKey.of(testOwner.getLabel(), result.getTestAction().getConfiguration());
+        ConfiguredTargetKey.builder()
+            .setLabel(testOwner.getLabel())
+            .setConfiguration(result.getTestAction().getConfiguration())
+            .build();
     aggregators.get(configuredTargetKey).testEvent(result);
   }
 
@@ -137,20 +144,39 @@ public class AggregatingTestListener {
     }
   }
 
+  private void targetSkipped(ConfiguredTargetKey configuredTargetKey) {
+    TestResultAggregator aggregator = aggregators.get(configuredTargetKey);
+    if (aggregator != null) {
+      aggregator.targetSkipped();
+    }
+  }
+
   @VisibleForTesting
   void buildComplete(
-      Collection<ConfiguredTarget> actualTargets, Collection<ConfiguredTarget> successfulTargets) {
+      Collection<ConfiguredTarget> actualTargets,
+      Collection<ConfiguredTarget> skippedTargets,
+      Collection<ConfiguredTarget> successfulTargets) {
     if (actualTargets == null || successfulTargets == null) {
       return;
     }
 
+    ImmutableSet<ConfiguredTarget> nonSuccessfulTargets =
+        Sets.difference(ImmutableSet.copyOf(actualTargets), ImmutableSet.copyOf(successfulTargets))
+            .immutableCopy();
     for (ConfiguredTarget target :
         Sets.difference(
-            ImmutableSet.copyOf(actualTargets), ImmutableSet.copyOf(successfulTargets))) {
+            ImmutableSet.copyOf(nonSuccessfulTargets), ImmutableSet.copyOf(skippedTargets))) {
       if (isAlias(target)) {
         continue;
       }
       targetFailure(asKey(target));
+    }
+
+    for (ConfiguredTarget target : skippedTargets) {
+      if (isAlias(target)) {
+        continue;
+      }
+      targetSkipped(asKey(target));
     }
   }
 
@@ -161,7 +187,8 @@ public class AggregatingTestListener {
       blazeHalted = true;
     }
     skipTargetsOnFailure = result.getStopOnFirstFailure();
-    buildComplete(result.getActualTargets(), result.getSuccessfulTargets());
+    buildComplete(
+        result.getActualTargets(), result.getSkippedTargets(), result.getSuccessfulTargets());
   }
 
   @Subscribe
@@ -213,11 +240,10 @@ public class AggregatingTestListener {
       TestSummary summary;
       if (isAlias(testTarget)) {
         ConfiguredTargetKey actualKey =
-            ConfiguredTargetKey.of(
-                // A test is never in the host configuration.
-                testTarget.getLabel(),
-                testTarget.getConfigurationKey(),
-                /*isHostConfiguration=*/ false);
+            ConfiguredTargetKey.builder()
+                .setLabel(testTarget.getLabel())
+                .setConfigurationKey(testTarget.getConfigurationKey())
+                .build();
         TestResultAggregator aggregator = aggregators.get(actualKey);
         TestSummary.Builder summaryBuilder = TestSummary.newBuilder();
         summaryBuilder.mergeFrom(aggregator.aggregateAndReportSummary(skipTargetsOnFailure));
@@ -263,10 +289,9 @@ public class AggregatingTestListener {
 
   private static ConfiguredTargetKey asKey(ConfiguredTarget target) {
     Preconditions.checkArgument(!isAlias(target));
-    return ConfiguredTargetKey.of(
-        // A test is never in the host configuration.
-        AliasProvider.getDependencyLabel(target),
-        target.getConfigurationKey(),
-        /*isHostConfiguration=*/ false);
+    return ConfiguredTargetKey.builder()
+        .setLabel(AliasProvider.getDependencyLabel(target))
+        .setConfigurationKey(target.getConfigurationKey())
+        .build();
   }
 }

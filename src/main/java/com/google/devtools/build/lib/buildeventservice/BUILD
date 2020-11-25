@@ -11,6 +11,16 @@ filegroup(
 )
 
 java_library(
+    name = "BuildEventServiceAvailabilityEvent",
+    srcs = ["BuildEventServiceAvailabilityEvent.java"],
+    deps = [
+        "//src/main/java/com/google/devtools/build/lib/util:exit_code",
+        "//src/main/protobuf:failure_details_java_proto",
+        "//third_party:jsr305",
+    ],
+)
+
+java_library(
     name = "buildeventservice-options",
     srcs = ["BuildEventServiceOptions.java"],
     deps = [
@@ -29,6 +39,7 @@ java_library(
         "//src/main/java/com/google/devtools/build/lib:runtime",
         "//src/main/java/com/google/devtools/build/lib/analysis:test/test_configuration",
         "//src/main/java/com/google/devtools/build/lib/authandtls",
+        "//src/main/java/com/google/devtools/build/lib/bugreport",
         "//src/main/java/com/google/devtools/build/lib/buildeventservice/client",
         "//src/main/java/com/google/devtools/build/lib/buildeventstream",
         "//src/main/java/com/google/devtools/build/lib/buildeventstream:large-buildevent-serialized-event",

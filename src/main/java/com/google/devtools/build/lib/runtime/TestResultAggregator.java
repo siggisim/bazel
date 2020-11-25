@@ -70,7 +70,10 @@ final class TestResultAggregator {
   private final Map<Artifact, TestResult> statusMap = new HashMap<>();
 
   public TestResultAggregator(
-      ConfiguredTarget target, BuildConfiguration configuration, AggregationPolicy policy) {
+      ConfiguredTarget target,
+      BuildConfiguration configuration,
+      AggregationPolicy policy,
+      boolean skippedThisTest) {
     this.testTarget = target;
     this.policy = policy;
 
@@ -83,6 +86,7 @@ final class TestResultAggregator {
       this.summary.setConfiguration(configuration);
     }
     this.summary.setStatus(BlazeTestStatus.NO_STATUS);
+    this.summary.setSkipped(skippedThisTest);
     this.remainingRuns = new HashSet<>(TestProvider.getTestStatusArtifacts(target));
   }
 
@@ -93,7 +97,10 @@ final class TestResultAggregator {
   synchronized void testEvent(TestResult result) {
     ActionOwner testOwner = result.getTestAction().getOwner();
     ConfiguredTargetKey targetLabel =
-        ConfiguredTargetKey.of(testOwner.getLabel(), result.getTestAction().getConfiguration());
+        ConfiguredTargetKey.builder()
+            .setLabel(testOwner.getLabel())
+            .setConfiguration(result.getTestAction().getConfiguration())
+            .build();
     Preconditions.checkArgument(targetLabel.equals(asKey(testTarget)));
 
     TestResult previousResult = statusMap.put(result.getTestStatusArtifact(), result);
@@ -147,6 +154,21 @@ final class TestResultAggregator {
     policy.eventBus.post(summary.build());
   }
 
+  synchronized void targetSkipped() {
+    if (remainingRuns.isEmpty()) {
+      // Blaze does not guarantee that BuildResult.getSuccessfulTargets() and posted TestResult
+      // events are in sync. Thus, it is possible that a test event was posted, but the target is
+      // not present in the set of successful targets.
+      return;
+    }
+
+    summary.setStatus(BlazeTestStatus.NO_STATUS);
+
+    // These are never going to run; removing them marks the target complete.
+    remainingRuns.clear();
+    policy.eventBus.post(summary.build());
+  }
+
   /** Returns the known aggregate results for the given target at the current moment. */
   synchronized TestSummary.Builder getCurrentSummaryForTesting() {
     return summary;
@@ -164,11 +186,10 @@ final class TestResultAggregator {
   }
 
   private static ConfiguredTargetKey asKey(ConfiguredTarget target) {
-    return ConfiguredTargetKey.of(
-        // A test is never in the host configuration.
-        AliasProvider.getDependencyLabel(target),
-        target.getConfigurationKey(),
-        /*isHostConfiguration=*/ false);
+    return ConfiguredTargetKey.builder()
+        .setLabel(AliasProvider.getDependencyLabel(target))
+        .setConfigurationKey(target.getConfigurationKey())
+        .build();
   }
 
   private static BlazeTestStatus aggregateStatus(BlazeTestStatus status, BlazeTestStatus other) {

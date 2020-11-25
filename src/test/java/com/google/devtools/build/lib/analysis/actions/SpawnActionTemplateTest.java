@@ -134,7 +134,7 @@ public class SpawnActionTemplateTest {
   }
 
   @Test
-  public void getKey_same() {
+  public void getKey_same() throws Exception {
     ActionKeyContext keyContext = new ActionKeyContext();
     SpecialArtifact inputTreeArtifact = createInputTreeArtifact();
     SpecialArtifact outputTreeArtifact = createOutputTreeArtifact();
@@ -158,11 +158,12 @@ public class SpawnActionTemplateTest {
             .setOutputPathMapper(IDENTITY_MAPPER)
             .setMnemonics("ActionTemplate", "ExpandedAction")
             .build(ActionsTestUtil.NULL_ACTION_OWNER);
-    assertThat(actionTemplate2.getKey(keyContext)).isEqualTo(actionTemplate.getKey(keyContext));
+    assertThat(actionTemplate2.getKey(keyContext, /*artifactExpander=*/ null))
+        .isEqualTo(actionTemplate.getKey(keyContext, /*artifactExpander=*/ null));
   }
 
   @Test
-  public void getKey_differs() {
+  public void getKey_differs() throws Exception {
     ActionKeyContext keyContext = new ActionKeyContext();
     SpecialArtifact inputTreeArtifact = createInputTreeArtifact();
     SpecialArtifact outputTreeArtifact = createOutputTreeArtifact();
@@ -186,7 +187,8 @@ public class SpawnActionTemplateTest {
             .setOutputPathMapper(IDENTITY_MAPPER)
             .setMnemonics("ActionTemplate", "ExpandedAction2")
             .build(ActionsTestUtil.NULL_ACTION_OWNER);
-    assertThat(actionTemplate2.getKey(keyContext)).isNotEqualTo(actionTemplate.getKey(keyContext));
+    assertThat(actionTemplate2.getKey(keyContext, /*artifactExpander=*/ null))
+        .isNotEqualTo(actionTemplate.getKey(keyContext, /*artifactExpander=*/ null));
   }
 
   @Test

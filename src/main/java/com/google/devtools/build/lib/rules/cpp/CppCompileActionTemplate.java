@@ -22,23 +22,24 @@ import com.google.devtools.build.lib.actions.ActionAnalysisMetadata;
 import com.google.devtools.build.lib.actions.ActionExecutionContext;
 import com.google.devtools.build.lib.actions.ActionKeyCacher;
 import com.google.devtools.build.lib.actions.ActionKeyContext;
-import com.google.devtools.build.lib.actions.ActionLookupValue.ActionLookupKey;
+import com.google.devtools.build.lib.actions.ActionLookupKey;
 import com.google.devtools.build.lib.actions.ActionOwner;
 import com.google.devtools.build.lib.actions.ActionTemplate;
 import com.google.devtools.build.lib.actions.Artifact;
 import com.google.devtools.build.lib.actions.Artifact.SpecialArtifact;
 import com.google.devtools.build.lib.actions.Artifact.TreeFileArtifact;
 import com.google.devtools.build.lib.actions.CommandLineExpansionException;
+import com.google.devtools.build.lib.actions.MiddlemanType;
 import com.google.devtools.build.lib.collect.nestedset.NestedSet;
 import com.google.devtools.build.lib.collect.nestedset.NestedSetBuilder;
 import com.google.devtools.build.lib.collect.nestedset.Order;
 import com.google.devtools.build.lib.rules.cpp.CcCompilationHelper.SourceCategory;
-import com.google.devtools.build.lib.syntax.EvalException;
 import com.google.devtools.build.lib.util.Fingerprint;
 import com.google.devtools.build.lib.vfs.FileSystemUtils;
 import java.util.ArrayList;
 import java.util.List;
 import javax.annotation.Nullable;
+import net.starlark.java.eval.EvalException;
 
 /** An {@link ActionTemplate} that expands into {@link CppCompileAction}s at execution time. */
 public final class CppCompileActionTemplate extends ActionKeyCacher
@@ -130,7 +131,8 @@ public final class CppCompileActionTemplate extends ActionKeyCacher
             TreeFileArtifact.createTemplateExpansionOutput(
                 outputTreeArtifact, outputName, artifactOwner);
         TreeFileArtifact dotdFileArtifact = null;
-        if (dotdTreeArtifact != null) {
+        if (dotdTreeArtifact != null
+            && cppCompileActionBuilder.useDotdFile(inputTreeFileArtifact)) {
           dotdFileArtifact =
               TreeFileArtifact.createTemplateExpansionOutput(
                   dotdTreeArtifact, outputName + ".d", artifactOwner);
@@ -147,8 +149,11 @@ public final class CppCompileActionTemplate extends ActionKeyCacher
   }
 
   @Override
-  protected void computeKey(ActionKeyContext actionKeyContext, Fingerprint fp)
-      throws CommandLineExpansionException {
+  protected void computeKey(
+      ActionKeyContext actionKeyContext,
+      @Nullable Artifact.ArtifactExpander artifactExpander,
+      Fingerprint fp)
+      throws CommandLineExpansionException, InterruptedException {
     CompileCommandLine commandLine =
         CppCompileAction.buildCommandLine(
             sourceTreeArtifact,
@@ -318,6 +323,11 @@ public final class CppCompileActionTemplate extends ActionKeyCacher
   @Override
   public String prettyPrint() {
     return "CppCompileActionTemplate compiling " + sourceTreeArtifact.getExecPathString();
+  }
+
+  @Override
+  public String describe() {
+    return "Compiling all C++ files in " + sourceTreeArtifact.prettyPrint();
   }
 
   @Override

@@ -23,10 +23,11 @@ import com.google.devtools.build.lib.actions.cache.ActionCache;
 import com.google.devtools.build.lib.analysis.AnalysisOptions;
 import com.google.devtools.build.lib.analysis.BlazeDirectories;
 import com.google.devtools.build.lib.analysis.config.CoreOptions;
+import com.google.devtools.build.lib.clock.Clock;
 import com.google.devtools.build.lib.cmdline.Label;
 import com.google.devtools.build.lib.events.Reporter;
 import com.google.devtools.build.lib.exec.SingleBuildFileCache;
-import com.google.devtools.build.lib.packages.StarlarkSemanticsOptions;
+import com.google.devtools.build.lib.packages.semantics.BuildLanguageOptions;
 import com.google.devtools.build.lib.pkgcache.PackageManager;
 import com.google.devtools.build.lib.pkgcache.PackageOptions;
 import com.google.devtools.build.lib.pkgcache.PathPackageLocator;
@@ -41,7 +42,6 @@ import com.google.devtools.build.lib.skyframe.SkyframeExecutor;
 import com.google.devtools.build.lib.skyframe.TopDownActionCache;
 import com.google.devtools.build.lib.util.AbruptExitException;
 import com.google.devtools.build.lib.util.DetailedExitCode;
-import com.google.devtools.build.lib.util.ExitCode;
 import com.google.devtools.build.lib.util.io.OutErr;
 import com.google.devtools.build.lib.util.io.TimestampGranularityMonitor;
 import com.google.devtools.build.lib.vfs.FileSystemUtils;
@@ -216,7 +216,7 @@ public class CommandEnvironment {
 
     this.repoEnv.putAll(clientEnv);
     if (command.builds()) {
-      // Compute the set of environment variables that are whitelisted on the commandline
+      // Compute the set of environment variables that are allowlisted on the commandline
       // for inheritance.
       for (Map.Entry<String, String> entry :
           options.getOptions(CoreOptions.class).actionEnvironment) {
@@ -248,22 +248,34 @@ public class CommandEnvironment {
     Path workspace = getWorkspace();
     Path workingDirectory;
     if (inWorkspace()) {
-      if (commandOptions.clientCwd.containsUplevelReferences()) {
+      PathFragment clientCwd = commandOptions.clientCwd;
+      if (clientCwd.containsUplevelReferences()) {
         throw new AbruptExitException(
             DetailedExitCode.of(
-                ExitCode.COMMAND_LINE_ERROR,
                 FailureDetail.newBuilder()
-                    .setMessage("Client cwd contains uplevel references")
+                    .setMessage("Client cwd '" + clientCwd + "' contains uplevel references")
                     .setClientEnvironment(
                         FailureDetails.ClientEnvironment.newBuilder()
                             .setCode(FailureDetails.ClientEnvironment.Code.CLIENT_CWD_MALFORMED)
                             .build())
                     .build()));
       }
-      workingDirectory = workspace.getRelative(commandOptions.clientCwd);
+      if (clientCwd.isAbsolute() && !clientCwd.startsWith(workspace.asFragment())) {
+        throw new AbruptExitException(
+            DetailedExitCode.of(
+                FailureDetail.newBuilder()
+                    .setMessage(
+                        String.format(
+                            "Client cwd '%s' is not inside workspace '%s'", clientCwd, workspace))
+                    .setClientEnvironment(
+                        FailureDetails.ClientEnvironment.newBuilder()
+                            .setCode(FailureDetails.ClientEnvironment.Code.CLIENT_CWD_MALFORMED)
+                            .build())
+                    .build()));
+      }
+      workingDirectory = workspace.getRelative(clientCwd);
     } else {
-      workspace = FileSystemUtils.getWorkingDirectory(getRuntime().getFileSystem());
-      workingDirectory = workspace;
+      workingDirectory = FileSystemUtils.getWorkingDirectory(getRuntime().getFileSystem());
     }
     return workingDirectory;
   }
@@ -296,6 +308,14 @@ public class CommandEnvironment {
     return runtime;
   }
 
+  public Clock getClock() {
+    return getRuntime().getClock();
+  }
+
+  public OptionsProvider getStartupOptionsProvider() {
+    return getRuntime().getStartupOptionsProvider();
+  }
+
   public BlazeWorkspace getBlazeWorkspace() {
     return workspace;
   }
@@ -304,6 +324,7 @@ public class CommandEnvironment {
     return directories;
   }
 
+  @Nullable
   public PathPackageLocator getPackageLocator() {
     return packageLocator;
   }
@@ -344,18 +365,18 @@ public class CommandEnvironment {
   }
 
   /**
-   * Return an ordered version of the client environment restricted to those variables whitelisted
+   * Return an ordered version of the client environment restricted to those variables allowlisted
    * by the command-line options to be inheritable by actions.
    */
-  public Map<String, String> getWhitelistedActionEnv() {
+  public Map<String, String> getAllowlistedActionEnv() {
     return filterClientEnv(visibleActionEnv);
   }
 
   /**
-   * Return an ordered version of the client environment restricted to those variables whitelisted
+   * Return an ordered version of the client environment restricted to those variables allowlisted
    * by the command-line options to be inheritable by actions.
    */
-  public Map<String, String> getWhitelistedTestEnv() {
+  public Map<String, String> getAllowlistedTestEnv() {
     return filterClientEnv(visibleTestEnv);
   }
 
@@ -654,7 +675,7 @@ public class CommandEnvironment {
             reporter,
             options.getOptions(PackageOptions.class),
             packageLocator,
-            options.getOptions(StarlarkSemanticsOptions.class),
+            options.getOptions(BuildLanguageOptions.class),
             getCommandId(),
             clientEnv,
             timestampGranularityMonitor,
@@ -674,7 +695,8 @@ public class CommandEnvironment {
    *
    * @throws AbruptExitException if this command is unsuitable to be run as specified
    */
-  void beforeCommand(InvocationPolicy invocationPolicy) throws AbruptExitException {
+  @VisibleForTesting
+  public void beforeCommand(InvocationPolicy invocationPolicy) throws AbruptExitException {
     CommonCommandOptions commonOptions = options.getOptions(CommonCommandOptions.class);
     eventBus.post(new BuildMetadataEvent(makeMapFromMapEntries(commonOptions.buildMetadata)));
     eventBus.post(

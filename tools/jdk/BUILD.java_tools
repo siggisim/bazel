@@ -1,4 +1,5 @@
 package(default_visibility = ["//visibility:public"])
+
 exports_files(glob(["**/*.jar"]))
 
 licenses(["notice"])  # Apache 2.0
@@ -6,6 +7,14 @@ licenses(["notice"])  # Apache 2.0
 load("@rules_cc//cc:defs.bzl", "cc_binary", "cc_library", "cc_proto_library")
 load("@rules_java//java:defs.bzl", "java_binary", "java_import", "java_toolchain")
 load("@rules_proto//proto:defs.bzl", "proto_library")
+load(
+    ":java_toolchain_default.bzl",
+    "JAVABUILDER_TOOLCHAIN_CONFIGURATION",
+    "JVM8_TOOLCHAIN_CONFIGURATION",
+    "PREBUILT_TOOLCHAIN_CONFIGURATION",
+    "VANILLA_TOOLCHAIN_CONFIGURATION",
+    "java_toolchain_default",
+)
 
 SUPRESSED_WARNINGS = select({
     ":windows": [],
@@ -15,163 +24,78 @@ SUPRESSED_WARNINGS = select({
     ],
 })
 
-java_toolchain(
+java_toolchain_default(
     name = "toolchain",
-    bootclasspath = ["@bazel_tools//tools/jdk:platformclasspath"],
-    forcibly_disable_header_compilation = 0,
-    genclass = [":GenClass"],
-    header_compiler = [":Turbine"],
-    header_compiler_direct = [":TurbineDirect"],
-    ijar = [":ijar"],
-    jacocorunner = ":jacoco_coverage_runner_filegroup",
-    javabuilder = [":JavaBuilder"],
-    javac = [":javac_jar"],
-    javac_supports_workers = 1,
-    jvm_opts = [
-        # In JDK9 we have seen a ~30% slow down in JavaBuilder performance when using
-        # G1 collector and having compact strings enabled.
-        "-XX:+UseParallelOldGC",
-        "-XX:-CompactStrings",
-        # Allow JavaBuilder to access internal javac APIs.
-        "--add-exports=jdk.compiler/com.sun.tools.javac.api=ALL-UNNAMED",
-        "--add-exports=jdk.compiler/com.sun.tools.javac.code=ALL-UNNAMED",
-        "--add-exports=jdk.compiler/com.sun.tools.javac.comp=ALL-UNNAMED",
-        "--add-exports=jdk.compiler/com.sun.tools.javac.file=ALL-UNNAMED",
-        "--add-exports=jdk.compiler/com.sun.tools.javac.main=ALL-UNNAMED",
-        "--add-exports=jdk.compiler/com.sun.tools.javac.tree=ALL-UNNAMED",
-        "--add-exports=jdk.compiler/com.sun.tools.javac.util=ALL-UNNAMED",
-        "--add-opens=jdk.compiler/com.sun.tools.javac.file=ALL-UNNAMED",
+    configuration = JAVABUILDER_TOOLCHAIN_CONFIGURATION,
+)
 
-        # override the javac in the JDK.
-        "--patch-module=java.compiler=$(location :java_compiler_jar)",
-        "--patch-module=jdk.compiler=$(location :jdk_compiler_jar)",
-
-        # quiet warnings from com.google.protobuf.UnsafeUtil,
-        # see: https://github.com/google/protobuf/issues/3781
-        # and: https://github.com/bazelbuild/bazel/issues/5599
-        "--add-opens=java.base/java.nio=ALL-UNNAMED",
-        "--add-opens=java.base/java.lang=ALL-UNNAMED",
-    ],
-    misc = [
-        "-XDskipDuplicateBridges=true",
-        "-g",
-        "-parameters",
-    ],
-    singlejar = [":singlejar"],
+java_toolchain_default(
+    name = "toolchain_hostjdk8",
+    configuration = JVM8_TOOLCHAIN_CONFIGURATION,
     source_version = "8",
     target_version = "8",
-    tools = [
-        ":java_compiler_jar",
-        ":jdk_compiler_jar",
-    ],
 )
 
-# A toolchain that targets java JAVA_LANGUAGE_LEVEL.
-java_toolchain(
-    name = "toolchain_jdk_JAVA_LANGUAGE_LEVEL",
-    bootclasspath = ["@bazel_tools//tools/jdk:platformclasspath"],
-    forcibly_disable_header_compilation = 0,
-    genclass = [":GenClass"],
-    header_compiler = [":Turbine"],
-    header_compiler_direct = [":TurbineDirect"],
-    ijar = [":ijar"],
-    jacocorunner = ":jacoco_coverage_runner_filegroup",
-    javabuilder = [":JavaBuilder"],
-    javac = [":javac_jar"],
-    javac_supports_workers = 1,
-    jvm_opts = [
-        # In JDK9 we have seen a ~30% slow down in JavaBuilder performance
-        # when using G1 collector and having compact strings enabled.
-        "-XX:+UseParallelOldGC",
-        "-XX:-CompactStrings",
-        # Allow JavaBuilder to access internal javac APIs.
-        "--add-exports=jdk.compiler/com.sun.tools.javac.api=ALL-UNNAMED",
-        "--add-exports=jdk.compiler/com.sun.tools.javac.code=ALL-UNNAMED",
-        "--add-exports=jdk.compiler/com.sun.tools.javac.comp=ALL-UNNAMED",
-        "--add-exports=jdk.compiler/com.sun.tools.javac.file=ALL-UNNAMED",
-        "--add-exports=jdk.compiler/com.sun.tools.javac.main=ALL-UNNAMED",
-        "--add-exports=jdk.compiler/com.sun.tools.javac.tree=ALL-UNNAMED",
-        "--add-exports=jdk.compiler/com.sun.tools.javac.util=ALL-UNNAMED",
-        "--add-opens=jdk.compiler/com.sun.tools.javac.file=ALL-UNNAMED",
-
-        # override the javac in the JDK.
-        "--patch-module=java.compiler=$(location :java_compiler_jar)",
-        "--patch-module=jdk.compiler=$(location :jdk_compiler_jar)",
-
-        # quiet warnings from com.google.protobuf.UnsafeUtil,
-        # see: https://github.com/google/protobuf/issues/3781
-        # and: https://github.com/bazelbuild/bazel/issues/5599
-        "--add-opens=java.base/java.nio=ALL-UNNAMED",
-        "--add-opens=java.base/java.lang=ALL-UNNAMED",
-    ],
-    misc = [
-        "-XDskipDuplicateBridges=true",
-        "-g",
-        "-parameters",
-    ],
-    singlejar = [":singlejar"],
-    source_version = "JAVA_LANGUAGE_LEVEL",
-    target_version = "JAVA_LANGUAGE_LEVEL",
-    tools = [
-        ":java_compiler_jar",
-        ":jdk_compiler_jar",
-    ],
+# Default to the Java 8 language level.
+# TODO(cushon): consider if/when we should increment this?
+java_toolchain_default(
+    name = "legacy_toolchain",
+    configuration = JAVABUILDER_TOOLCHAIN_CONFIGURATION,
+    source_version = "8",
+    target_version = "8",
 )
 
-# The new toolchain is using all the pre-built tools, including
-# singlejar and ijar, even on remote execution. This toolchain
-# should be used only when host and execution platform are the
-# same, otherwise the binaries will not work on the execution
-# platform.
-java_toolchain(
+# Needed for openbsd / JVM8
+java_toolchain_default(
+    name = "legacy_toolchain_jvm8",
+    configuration = JVM8_TOOLCHAIN_CONFIGURATION,
+    source_version = "8",
+    target_version = "8",
+)
+
+java_toolchain_default(
+    name = "toolchain_vanilla",
+    configuration = VANILLA_TOOLCHAIN_CONFIGURATION,
+)
+
+RELEASES = (8, 9, 10, 11)
+
+[
+    (
+        java_toolchain_default(
+            name = "toolchain_java%d" % release,
+            configuration = JAVABUILDER_TOOLCHAIN_CONFIGURATION,
+            source_version = "%s" % release,
+            target_version = "%s" % release,
+        ),
+        # Needed for openbsd / JVM8
+        java_toolchain_default(
+            name = "toolchain_java%d_jvm8" % release,
+            configuration = JVM8_TOOLCHAIN_CONFIGURATION,
+            source_version = "%s" % release,
+            target_version = "%s" % release,
+        ),
+    )
+    for release in RELEASES
+]
+
+# A toolchain that targets java 14.
+java_toolchain_default(
+    name = "toolchain_jdk_14",
+    source_version = "14",
+    target_version = "14",
+)
+
+# A toolchain that targets java 15.
+java_toolchain_default(
+    name = "toolchain_jdk_15",
+    source_version = "15",
+    target_version = "15",
+)
+
+java_toolchain_default(
     name = "prebuilt_toolchain",
-    bootclasspath = ["@bazel_tools//tools/jdk:platformclasspath"],
-    forcibly_disable_header_compilation = 0,
-    genclass = [":GenClass"],
-    header_compiler = [":Turbine"],
-    header_compiler_direct = [":TurbineDirect"],
-    ijar = [":ijar_prebuilt_binary"],
-    jacocorunner = ":jacoco_coverage_runner_filegroup",
-    javabuilder = [":JavaBuilder"],
-    javac = [":javac_jar"],
-    javac_supports_workers = 1,
-    jvm_opts = [
-        # In JDK9 we have seen a ~30% slow down in JavaBuilder performance when using
-        # G1 collector and having compact strings enabled.
-        "-XX:+UseParallelOldGC",
-        "-XX:-CompactStrings",
-        # Allow JavaBuilder to access internal javac APIs.
-        "--add-exports=jdk.compiler/com.sun.tools.javac.api=ALL-UNNAMED",
-        "--add-exports=jdk.compiler/com.sun.tools.javac.code=ALL-UNNAMED",
-        "--add-exports=jdk.compiler/com.sun.tools.javac.comp=ALL-UNNAMED",
-        "--add-exports=jdk.compiler/com.sun.tools.javac.file=ALL-UNNAMED",
-        "--add-exports=jdk.compiler/com.sun.tools.javac.main=ALL-UNNAMED",
-        "--add-exports=jdk.compiler/com.sun.tools.javac.tree=ALL-UNNAMED",
-        "--add-exports=jdk.compiler/com.sun.tools.javac.util=ALL-UNNAMED",
-        "--add-opens=jdk.compiler/com.sun.tools.javac.file=ALL-UNNAMED",
-
-        # override the javac in the JDK.
-        "--patch-module=java.compiler=$(location :java_compiler_jar)",
-        "--patch-module=jdk.compiler=$(location :jdk_compiler_jar)",
-
-        # quiet warnings from com.google.protobuf.UnsafeUtil,
-        # see: https://github.com/google/protobuf/issues/3781
-        # and: https://github.com/bazelbuild/bazel/issues/5599
-        "--add-opens=java.base/java.nio=ALL-UNNAMED",
-        "--add-opens=java.base/java.lang=ALL-UNNAMED",
-    ],
-    misc = [
-        "-XDskipDuplicateBridges=true",
-        "-g",
-        "-parameters",
-    ],
-    singlejar = [":prebuilt_singlejar"],
-    source_version = "8",
-    target_version = "8",
-    tools = [
-        ":java_compiler_jar",
-        ":jdk_compiler_jar",
-    ],
+    configuration = PREBUILT_TOOLCHAIN_CONFIGURATION,
 )
 
 filegroup(
@@ -212,11 +136,6 @@ filegroup(
 filegroup(
     name = "SingleJar",
     srcs = ["java_tools/bazel-singlejar_deploy.jar"],
-)
-
-filegroup(
-    name = "JarJar",
-    srcs = ["java_tools/jarjar_command_deploy.jar"],
 )
 
 filegroup(
@@ -289,21 +208,21 @@ java_import(
 
 java_import(
     name = "asm",
-    jars = ["java_tools/third_party/java/jacoco/asm-7.0.jar"],
-    srcjar = "java_tools/third_party/java/jacoco/asm-7.0-sources.jar",
+    jars = ["java_tools/third_party/java/jacoco/asm-8.0.jar"],
+    srcjar = "java_tools/third_party/java/jacoco/asm-8.0-sources.jar",
 )
 
 java_import(
     name = "asm-commons",
-    jars = ["java_tools/third_party/java/jacoco/asm-commons-7.0.jar"],
-    srcjar = "java_tools/third_party/java/jacoco/asm-commons-7.0-sources.jar",
+    jars = ["java_tools/third_party/java/jacoco/asm-commons-8.0.jar"],
+    srcjar = "java_tools/third_party/java/jacoco/asm-commons-8.0-sources.jar",
     runtime_deps = [":asm-tree"],
 )
 
 java_import(
     name = "asm-tree",
-    jars = ["java_tools/third_party/java/jacoco/asm-tree-7.0.jar"],
-    srcjar = "java_tools/third_party/java/jacoco/asm-tree-7.0-sources.jar",
+    jars = ["java_tools/third_party/java/jacoco/asm-tree-8.0.jar"],
+    srcjar = "java_tools/third_party/java/jacoco/asm-tree-8.0-sources.jar",
     runtime_deps = [":asm"],
 )
 
@@ -314,27 +233,50 @@ config_setting(
 
 config_setting(
     name = "linux_x86_64",
-    values = {"cpu": "k8"},
-)
-
-config_setting(
-    name = "darwin",
-    values = {"cpu": "darwin"},
+    constraint_values = [
+        "@platforms//os:linux",
+        "@platforms//cpu:x86_64",
+    ],
 )
 
 config_setting(
     name = "darwin_x86_64",
-    values = {"cpu": "darwin_x86_64"},
+    constraint_values = [
+        "@platforms//os:macos",
+        "@platforms//cpu:x86_64",
+    ],
+)
+
+config_setting(
+    name = "darwin_arm64",
+    constraint_values = [
+        "@platforms//os:macos",
+        "@platforms//cpu:arm64",
+    ],
+)
+
+config_setting(
+    name = "darwin_arm64e",
+    constraint_values = [
+        "@platforms//os:macos",
+        "@platforms//cpu:arm64e",
+    ],
 )
 
 config_setting(
     name = "windows",
-    values = {"cpu": "x64_windows"},
+    constraint_values = ["@platforms//os:windows"],
 )
 
 config_setting(
     name = "freebsd",
-    values = {"cpu": "freebsd"},
+    constraint_values = ["@platforms//os:freebsd"],
+    visibility = ["//visibility:public"],
+)
+
+config_setting(
+    name = "openbsd",
+    constraint_values = ["@platforms//os:openbsd"],
     visibility = ["//visibility:public"],
 )
 
@@ -350,8 +292,9 @@ alias(
     name = "singlejar_prebuilt_or_cc_binary",
     actual = select({
         ":linux_x86_64": "java_tools/src/tools/singlejar/singlejar_local",
-        ":darwin": "java_tools/src/tools/singlejar/singlejar_local",
         ":darwin_x86_64": "java_tools/src/tools/singlejar/singlejar_local",
+        ":darwin_arm64": "java_tools/src/tools/singlejar/singlejar_local",
+        ":darwin_arm64e": "java_tools/src/tools/singlejar/singlejar_local",
         ":windows": "java_tools/src/tools/singlejar/singlejar_local.exe",
         "//conditions:default": "singlejar_cc_bin",
     }),
@@ -377,8 +320,9 @@ alias(
     name = "prebuilt_binary_or_cc_binary",
     actual = select({
         ":linux_x86_64": ":ijar_prebuilt_binary",
-        ":darwin": ":ijar_prebuilt_binary",
         ":darwin_x86_64": ":ijar_prebuilt_binary",
+        ":darwin_arm64": ":ijar_prebuilt_binary",
+        ":darwin_arm64e": ":ijar_prebuilt_binary",
         ":windows": ":ijar_prebuilt_binary",
         "//conditions:default": ":ijar_cc_binary",
     }),
@@ -549,13 +493,6 @@ cc_library(
 )
 
 cc_library(
-    name = "lib-util",
-    srcs = ["java_tools/src/main/native/windows/util.cc"],
-    hdrs = ["java_tools/src/main/native/windows/util.h"],
-    strip_include_prefix = "java_tools",
-)
-
-cc_library(
     name = "errors",
     srcs = select({
         ":windows": ["java_tools/src/main/cpp/util/errors_windows.cc"],
@@ -633,6 +570,7 @@ cc_binary(
     copts = SUPRESSED_WARNINGS,
     linkopts = select({
         ":freebsd": ["-lm"],
+        ":openbsd": ["-lm"],
         "//conditions:default": [],
     }),
     linkstatic = 1,
@@ -655,6 +593,7 @@ cc_binary(
     copts = SUPRESSED_WARNINGS,
     linkopts = select({
         ":freebsd": ["-lm"],
+        ":openbsd": ["-lm"],
         "//conditions:default": [],
     }),
     linkstatic = 1,
@@ -676,7 +615,6 @@ cc_library(
     hdrs = [
         "java_tools/src/tools/singlejar/combiners.h",
         ":transient_bytes",
-        ":zip_headers",
     ],
     copts = SUPRESSED_WARNINGS,
     strip_include_prefix = "java_tools",

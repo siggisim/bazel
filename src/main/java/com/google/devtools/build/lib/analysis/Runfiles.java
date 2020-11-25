@@ -20,9 +20,9 @@ import com.google.common.base.Preconditions;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.Iterables;
+import com.google.common.collect.Maps;
 import com.google.common.collect.Streams;
 import com.google.devtools.build.lib.actions.Artifact;
-import com.google.devtools.build.lib.actions.ArtifactPathResolver;
 import com.google.devtools.build.lib.cmdline.LabelConstants;
 import com.google.devtools.build.lib.collect.nestedset.Depset;
 import com.google.devtools.build.lib.collect.nestedset.NestedSet;
@@ -35,31 +35,29 @@ import com.google.devtools.build.lib.events.EventKind;
 import com.google.devtools.build.lib.packages.BuildType;
 import com.google.devtools.build.lib.skyframe.serialization.autocodec.AutoCodec;
 import com.google.devtools.build.lib.skyframe.serialization.autocodec.AutoCodec.VisibleForSerialization;
-import com.google.devtools.build.lib.skylarkbuildapi.RunfilesApi;
-import com.google.devtools.build.lib.skylarkbuildapi.SymlinkEntryApi;
-import com.google.devtools.build.lib.syntax.Location;
-import com.google.devtools.build.lib.syntax.Printer;
+import com.google.devtools.build.lib.starlarkbuildapi.RunfilesApi;
+import com.google.devtools.build.lib.starlarkbuildapi.SymlinkEntryApi;
 import com.google.devtools.build.lib.util.Fingerprint;
 import com.google.devtools.build.lib.vfs.PathFragment;
-import java.io.BufferedReader;
-import java.io.IOException;
-import java.io.InputStreamReader;
+import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 import javax.annotation.Nullable;
+import net.starlark.java.eval.Printer;
+import net.starlark.java.syntax.Location;
 
 /**
  * An object that encapsulates runfiles. Conceptually, the runfiles are a map of paths to files,
  * forming a symlink tree.
  *
  * <p>In order to reduce memory consumption, this map is not explicitly stored here, but instead as
- * a combination of four parts: artifacts placed at their root-relative paths, source tree symlinks,
- * root symlinks (outside of the source tree), and artifacts included as parts of "pruning
- * manifests" (see {@link PruningManifest}).
+ * a combination of three parts: artifacts placed at their output-dir-relative paths, source tree
+ * symlinks and root symlinks (outside of the source tree).
  */
 @Immutable
 @AutoCodec
@@ -170,20 +168,18 @@ public final class Runfiles implements RunfilesApi {
   private final PathFragment suffix;
 
   /**
-   * The artifacts that should *always* be present in the runfiles directory. These are
-   * differentiated from the artifacts that may or may not be included by a pruning manifest
-   * (see {@link PruningManifest} below).
+   * The artifacts that should be present in the runfiles directory.
    *
    * <p>This collection may not include any middlemen. These artifacts will be placed at a location
-   * that corresponds to the root-relative path of each artifact. It's possible for several
-   * artifacts to have the same root-relative path, in which case the last one will win.
+   * that corresponds to the output-dir-relative path of each artifact. It's possible for several
+   * artifacts to have the same output-dir-relative path, in which case the last one will win.
    */
-  private final NestedSet<Artifact> unconditionalArtifacts;
+  private final NestedSet<Artifact> artifacts;
 
   /**
    * A map of symlinks that should be present in the runfiles directory. In general, the symlink can
-   * be determined from the artifact by using the root-relative path, so this should only be used
-   * for cases where that isn't possible.
+   * be determined from the artifact by using the output-dir-relative path, so this should only be
+   * used for cases where that isn't possible.
    *
    * <p>This may include runfiles symlinks from the root of the runfiles tree.
    */
@@ -235,57 +231,6 @@ public final class Runfiles implements RunfilesApi {
   private ConflictPolicy conflictPolicy = ConflictPolicy.IGNORE;
 
   /**
-   * Defines a set of artifacts that may or may not be included in the runfiles directory and a
-   * manifest file that makes that determination. These are applied on top of any artifacts
-   * specified in {@link #unconditionalArtifacts}.
-   *
-   * <p>The incentive behind this is to enable execution-phase "pruning" of runfiles. Anything set
-   * in unconditionalArtifacts is hard-set in Blaze's analysis phase, and thus unchangeable in
-   * response to execution phase results. This isn't always convenient. For example, say we have an
-   * action that consumes a set of "possible" runtime dependencies for a source file, parses that
-   * file for "import a.b.c" statements, and outputs a manifest of the actual dependencies that are
-   * referenced and thus really needed. This can reduce the size of the runfiles set, but we can't
-   * use this information until the manifest output is available.
-   *
-   * <p>Only artifacts present in the candidate set AND the manifest output make it into the
-   * runfiles tree. The candidate set requirement guarantees that analysis-time dependencies are a
-   * superset of the pruned dependencies, so undeclared inclusions (which can break build
-   * correctness) aren't possible.
-   */
-  @AutoCodec
-  public static class PruningManifest {
-    private final NestedSet<Artifact> candidateRunfiles;
-    private final Artifact manifestFile;
-
-    /**
-     * Creates a new pruning manifest.
-     *
-     * @param candidateRunfiles set of possible artifacts that the manifest file may reference
-     * @param manifestFile the manifest file, expected to be a newline-separated list of
-     *     source tree root-relative paths (i.e. "my/package/myfile.txt"). Anything that can't be
-     *     resolved back to an entry in candidateRunfiles is ignored and will *not* make it into
-     *     the runfiles tree.
-     */
-    public PruningManifest(NestedSet<Artifact> candidateRunfiles, Artifact manifestFile) {
-      this.candidateRunfiles = candidateRunfiles;
-      this.manifestFile = manifestFile;
-    }
-
-    public NestedSet<Artifact> getCandidateRunfiles() {
-      return candidateRunfiles;
-    }
-
-    public Artifact getManifestFile() {
-      return manifestFile;
-    }
-  }
-
-  /**
-   * The pruning manifests that should be applied to these runfiles.
-   */
-  private final NestedSet<PruningManifest> pruningManifests;
-
-  /**
    * If external runfiles should be created under .runfiles/wsname/external/repo as well as
    * .runfiles/repo.
    */
@@ -295,20 +240,18 @@ public final class Runfiles implements RunfilesApi {
   @VisibleForSerialization
   Runfiles(
       PathFragment suffix,
-      NestedSet<Artifact> unconditionalArtifacts,
+      NestedSet<Artifact> artifacts,
       NestedSet<SymlinkEntry> symlinks,
       NestedSet<SymlinkEntry> rootSymlinks,
-      NestedSet<PruningManifest> pruningManifests,
       NestedSet<Artifact> extraMiddlemen,
       EmptyFilesSupplier emptyFilesSupplier,
       ConflictPolicy conflictPolicy,
       boolean legacyExternalRunfiles) {
     this.suffix = suffix;
-    this.unconditionalArtifacts = Preconditions.checkNotNull(unconditionalArtifacts);
+    this.artifacts = Preconditions.checkNotNull(artifacts);
     this.symlinks = Preconditions.checkNotNull(symlinks);
     this.rootSymlinks = Preconditions.checkNotNull(rootSymlinks);
     this.extraMiddlemen = Preconditions.checkNotNull(extraMiddlemen);
-    this.pruningManifests = Preconditions.checkNotNull(pruningManifests);
     this.emptyFilesSupplier = Preconditions.checkNotNull(emptyFilesSupplier);
     this.conflictPolicy = conflictPolicy;
     this.legacyExternalRunfiles = legacyExternalRunfiles;
@@ -326,34 +269,18 @@ public final class Runfiles implements RunfilesApi {
     return suffix;
   }
 
-  /**
-   * Returns the artifacts that are unconditionally included in the runfiles (as opposed to
-   * pruning manifest candidates, which may or may not be included).
-   */
-  public NestedSet<Artifact> getUnconditionalArtifacts() {
-    return unconditionalArtifacts;
-  }
-
   public NestedSet<Artifact> getExtraMiddlemen() {
     return extraMiddlemen;
   }
 
-  /**
-   * Returns the collection of runfiles as artifacts, including both unconditional artifacts and
-   * pruning manifest candidates.
-   */
+  /** Returns the collection of runfiles as artifacts. */
   @Override
   public Depset /*<Artifact>*/ getArtifactsForStarlark() {
     return Depset.of(Artifact.TYPE, getArtifacts());
   }
 
   public NestedSet<Artifact> getArtifacts() {
-    NestedSetBuilder<Artifact> allArtifacts = NestedSetBuilder.stableOrder();
-    allArtifacts.addTransitive(unconditionalArtifacts);
-    for (PruningManifest manifest : getPruningManifests().toList()) {
-      allArtifacts.addTransitive(manifest.getCandidateRunfiles());
-    }
-    return allArtifacts.build();
+    return artifacts;
   }
 
   /** Returns the symlinks. */
@@ -375,7 +302,12 @@ public final class Runfiles implements RunfilesApi {
     Set<PathFragment> manifestKeys =
         Streams.concat(
                 symlinks.toList().stream().map(SymlinkEntry::getPath),
-                getArtifacts().toList().stream().map(Artifact::getRootRelativePath))
+                getArtifacts().toList().stream()
+                    .map(
+                        artifact ->
+                            legacyExternalRunfiles
+                                ? artifact.getOutputDirRelativePath(false)
+                                : artifact.getRunfilesPath()))
             .collect(ImmutableSet.toImmutableSet());
     Iterable<PathFragment> emptyKeys = emptyFilesSupplier.getExtraPaths(manifestKeys);
     return NestedSetBuilder.<String>stableOrder()
@@ -405,7 +337,9 @@ public final class Runfiles implements RunfilesApi {
   @VisibleForTesting
   static Map<PathFragment, Artifact> filterListForObscuringSymlinks(
       EventHandler eventHandler, Location location, Map<PathFragment, Artifact> workingManifest) {
-    Map<PathFragment, Artifact> newManifest = new HashMap<>();
+    Map<PathFragment, Artifact> newManifest =
+        Maps.newHashMapWithExpectedSize(workingManifest.size());
+    Set<PathFragment> noFurtherObstructions = new HashSet<>();
 
     outer:
     for (Map.Entry<PathFragment, Artifact> entry : workingManifest.entrySet()) {
@@ -413,8 +347,13 @@ public final class Runfiles implements RunfilesApi {
       Artifact symlink = entry.getValue();
       // drop nested entries; warn if this changes anything
       int n = source.segmentCount();
+      ArrayList<PathFragment> parents = new ArrayList<>(n);
       for (int j = 1; j < n; ++j) {
         PathFragment prefix = source.subFragment(0, n - j);
+        if (noFurtherObstructions.contains(prefix)) {
+          break;
+        }
+        parents.add(prefix);
         Artifact ancestor = workingManifest.get(prefix);
         if (ancestor != null) {
           // This is an obscuring symlink, so just drop it and move on if there's no reporter.
@@ -440,6 +379,7 @@ public final class Runfiles implements RunfilesApi {
           continue outer;
         }
       }
+      noFurtherObstructions.addAll(parents);
       newManifest.put(entry.getKey(), entry.getValue());
     }
     return newManifest;
@@ -452,37 +392,18 @@ public final class Runfiles implements RunfilesApi {
    *     normal source tree entries, or runfile conflicts. May be null, in which case obscuring
    *     symlinks are silently discarded, and conflicts are overwritten.
    * @param location Location for eventHandler warnings. Ignored if eventHandler is null.
-   * @param resolver The {@link ArtifactPathResolver} to use for the pruning manifest, if present.
    * @return Map<PathFragment, Artifact> path fragment to artifact, of normal source tree entries
    *     and elements that live outside the source tree. Null values represent empty input files.
    */
-  public Map<PathFragment, Artifact> getRunfilesInputs(EventHandler eventHandler, Location location,
-      ArtifactPathResolver resolver) throws IOException {
+  public Map<PathFragment, Artifact> getRunfilesInputs(
+      EventHandler eventHandler, Location location) {
     ConflictChecker checker = new ConflictChecker(conflictPolicy, eventHandler, location);
     Map<PathFragment, Artifact> manifest = getSymlinksAsMap(checker);
-    // Add unconditional artifacts (committed to inclusion on construction of runfiles).
-    for (Artifact artifact : getUnconditionalArtifacts().toList()) {
-      checker.put(manifest, artifact.getRootRelativePath(), artifact);
+    // Add artifacts (committed to inclusion on construction of runfiles).
+    for (Artifact artifact : getArtifacts().toList()) {
+      checker.put(manifest, artifact.getOutputDirRelativePath(false), artifact);
     }
 
-    // Add conditional artifacts (only included if they appear in a pruning manifest).
-    for (Runfiles.PruningManifest pruningManifest : getPruningManifests().toList()) {
-      // This map helps us convert from source tree root-relative paths back to artifacts.
-      Map<String, Artifact> allowedRunfiles = new HashMap<>();
-      for (Artifact artifact : pruningManifest.getCandidateRunfiles().toList()) {
-        allowedRunfiles.put(artifact.getRootRelativePath().getPathString(), artifact);
-      }
-      try (BufferedReader reader = new BufferedReader(
-          new InputStreamReader(resolver.toPath(pruningManifest.getManifestFile()).getInputStream()))) {
-        String line;
-        while ((line = reader.readLine()) != null) {
-          Artifact artifact = allowedRunfiles.get(line);
-          if (artifact != null) {
-            checker.put(manifest, artifact.getRootRelativePath(), artifact);
-          }
-        }
-      }
-    }
     manifest = filterListForObscuringSymlinks(eventHandler, location, manifest);
 
     // TODO(bazel-team): Create /dev/null-like Artifact to avoid nulls?
@@ -571,7 +492,7 @@ public final class Runfiles implements RunfilesApi {
     }
 
     private PathFragment getExternalPath(PathFragment path) {
-      return checkForWorkspace(path.relativeTo(LabelConstants.EXTERNAL_PACKAGE_NAME));
+      return checkForWorkspace(path.subFragment(1));
     }
 
     private PathFragment checkForWorkspace(PathFragment path) {
@@ -581,7 +502,8 @@ public final class Runfiles implements RunfilesApi {
     }
 
     private static boolean isUnderWorkspace(PathFragment path) {
-      return !path.startsWith(LabelConstants.EXTERNAL_PACKAGE_NAME);
+      return !path.startsWith(LabelConstants.EXTERNAL_PATH_PREFIX)
+          && !path.startsWith(LabelConstants.EXPERIMENTAL_EXTERNAL_PATH_PREFIX);
     }
   }
 
@@ -614,20 +536,13 @@ public final class Runfiles implements RunfilesApi {
    */
   public Map<PathFragment, Artifact> asMapWithoutRootSymlinks() {
     Map<PathFragment, Artifact> result = entriesToMap(symlinks, null);
-    // If multiple artifacts have the same root-relative path, the last one in the list will win.
-    // That is because the runfiles tree cannot contain the same artifact for different
-    // configurations, because it only uses root-relative paths.
-    for (Artifact artifact : unconditionalArtifacts.toList()) {
-      result.put(artifact.getRootRelativePath(), artifact);
+    // If multiple artifacts have the same output-dir-relative path, the last one in the list will
+    // win. That is because the runfiles tree cannot contain the same artifact for different
+    // configurations, because it only uses output-dir-relative paths.
+    for (Artifact artifact : artifacts.toList()) {
+      result.put(artifact.getOutputDirRelativePath(true), artifact);
     }
     return result;
-  }
-
-  /**
-   * Returns the pruning manifests specified for this runfiles tree.
-   */
-  public NestedSet<PruningManifest> getPruningManifests() {
-    return pruningManifests;
   }
 
   /**
@@ -638,9 +553,9 @@ public final class Runfiles implements RunfilesApi {
   }
 
   /**
-   * Returns the unified map of path fragments to artifacts, taking into account artifacts,
-   * symlinks, and pruning manifest candidates. The returned set is guaranteed to be a (not
-   * necessarily strict) superset of the actual runfiles tree created at execution time.
+   * Returns the unified map of path fragments to artifacts, taking into account artifacts and
+   * symlinks. The returned set is guaranteed to be a (not necessarily strict) superset of the
+   * actual runfiles tree created at execution time.
    */
   public NestedSet<Artifact> getAllArtifacts() {
     if (isEmpty()) {
@@ -648,12 +563,9 @@ public final class Runfiles implements RunfilesApi {
     }
     NestedSetBuilder<Artifact> allArtifacts = NestedSetBuilder.stableOrder();
     allArtifacts
-        .addTransitive(unconditionalArtifacts)
+        .addTransitive(artifacts)
         .addAll(Iterables.transform(symlinks.toList(), TO_ARTIFACT))
         .addAll(Iterables.transform(rootSymlinks.toList(), TO_ARTIFACT));
-    for (PruningManifest manifest : getPruningManifests().toList()) {
-      allArtifacts.addTransitive(manifest.getCandidateRunfiles());
-    }
     return allArtifacts.build();
   }
 
@@ -661,10 +573,9 @@ public final class Runfiles implements RunfilesApi {
    * Returns if there are no runfiles.
    */
   public boolean isEmpty() {
-    return unconditionalArtifacts.isEmpty()
+    return artifacts.isEmpty()
         && symlinks.isEmpty()
         && rootSymlinks.isEmpty()
-        && pruningManifests.isEmpty()
         && extraMiddlemen.isEmpty();
   }
 
@@ -778,8 +689,6 @@ public final class Runfiles implements RunfilesApi {
         NestedSetBuilder.stableOrder();
     private NestedSetBuilder<SymlinkEntry> rootSymlinksBuilder =
         NestedSetBuilder.stableOrder();
-    private NestedSetBuilder<PruningManifest> pruningManifestsBuilder =
-        NestedSetBuilder.stableOrder();
     private NestedSetBuilder<Artifact> extraMiddlemenBuilder = NestedSetBuilder.stableOrder();
     private EmptyFilesSupplier emptyFilesSupplier = DUMMY_EMPTY_FILES_SUPPLIER;
 
@@ -837,7 +746,6 @@ public final class Runfiles implements RunfilesApi {
           artifactsBuilder.build(),
           symlinksBuilder.build(),
           rootSymlinksBuilder.build(),
-          pruningManifestsBuilder.build(),
           extraMiddlemenBuilder.build(),
           emptyFilesSupplier,
           conflictPolicy,
@@ -946,24 +854,6 @@ public final class Runfiles implements RunfilesApi {
       rootSymlinksBuilder.addTransitive(symlinks);
       return this;
     }
-
-    /**
-     * Adds a pruning manifest. See {@link PruningManifest} for an explanation.
-     */
-    public Builder addPruningManifest(PruningManifest manifest) {
-      pruningManifestsBuilder.add(manifest);
-      return this;
-    }
-
-    /**
-     * Adds several pruning manifests as a NestedSet. See {@link PruningManifest} for an
-     * explanation.
-     */
-    public Builder addPruningManifests(NestedSet<PruningManifest> manifests) {
-      pruningManifestsBuilder.addTransitive(manifests);
-      return this;
-    }
-
     /**
      * Specify a function that can create additional manifest entries based on the input entries,
      * see {@link EmptyFilesSupplier} for more details.
@@ -1022,9 +912,7 @@ public final class Runfiles implements RunfilesApi {
      * Collects runfiles from data dependencies of a target.
      */
     public Builder addDataDeps(RuleContext ruleContext) {
-      addTargets(
-          getPrerequisites(ruleContext, "data", TransitionMode.DONT_CHECK),
-          RunfilesProvider.DATA_RUNFILES);
+      addTargets(getPrerequisites(ruleContext, "data"), RunfilesProvider.DATA_RUNFILES);
       return this;
     }
 
@@ -1080,7 +968,7 @@ public final class Runfiles implements RunfilesApi {
 
     /** Adds symlinks to given artifacts at their exec paths. */
     public Builder addSymlinksToArtifacts(NestedSet<Artifact> artifacts) {
-      // These are symlinks using the exec path, not the root-relative path, which currently
+      // These are symlinks using the exec path, not the output-dir-relative path, which currently
       // requires flattening.
       return addSymlinksToArtifacts(artifacts.toList());
     }
@@ -1104,29 +992,18 @@ public final class Runfiles implements RunfilesApi {
       return this;
     }
 
+    /** Add the other {@link Runfiles} object transitively, but don't merge artifacts. */
+    public Builder mergeExceptArtifacts(Runfiles runfiles) {
+      return merge(runfiles, false);
+    }
+
     /** Add the other {@link Runfiles} object transitively. */
     public Builder merge(Runfiles runfiles) {
-      return merge(runfiles, true, true);
+      return merge(runfiles, true);
     }
 
-    /**
-     * Add the other {@link Runfiles} object transitively, but don't merge unconditional artifacts.
-     */
-    public Builder mergeExceptUnconditionalArtifacts(Runfiles runfiles) {
-      return merge(runfiles, false, true);
-    }
-
-    /** Add the other {@link Runfiles} object transitively, but don't merge pruning manifests. */
-    public Builder mergeExceptPruningManifests(Runfiles runfiles) {
-      return merge(runfiles, true, false);
-    }
-
-    /**
-     * Add the other {@link Runfiles} object transitively, with the option to include or exclude
-     * pruning manifests in the merge.
-     */
-    private Builder merge(Runfiles runfiles, boolean includeUnconditionalArtifacts,
-        boolean includePruningManifests) {
+    /** Add the other {@link Runfiles} object transitively. */
+    private Builder merge(Runfiles runfiles, boolean includeArtifacts) {
       // Propagate the most strict conflict checking from merged-in runfiles
       if (runfiles.conflictPolicy.compareTo(conflictPolicy) > 0) {
         conflictPolicy = runfiles.conflictPolicy;
@@ -1138,14 +1015,11 @@ public final class Runfiles implements RunfilesApi {
       // may have an empty suffix, but that is covered above.
       Preconditions.checkArgument(
           suffix.equals(runfiles.suffix), "%s != %s", suffix, runfiles.suffix);
-      if (includeUnconditionalArtifacts) {
-        artifactsBuilder.addTransitive(runfiles.getUnconditionalArtifacts());
+      if (includeArtifacts) {
+        artifactsBuilder.addTransitive(runfiles.getArtifacts());
       }
       symlinksBuilder.addTransitive(runfiles.getSymlinks());
       rootSymlinksBuilder.addTransitive(runfiles.getRootSymlinks());
-      if (includePruningManifests) {
-        pruningManifestsBuilder.addTransitive(runfiles.getPruningManifests());
-      }
       extraMiddlemenBuilder.addTransitive(runfiles.getExtraMiddlemen());
       if (emptyFilesSupplier == DUMMY_EMPTY_FILES_SUPPLIER) {
         emptyFilesSupplier = runfiles.getEmptyFilesProvider();
@@ -1163,8 +1037,7 @@ public final class Runfiles implements RunfilesApi {
           // dependent rules in srcs (except for filegroups and such), but always in deps.
           // TODO(bazel-team): DONT_CHECK is not optimal here. Rules that use split configs need to
           // be changed not to call into here.
-          getPrerequisites(ruleContext, "srcs", TransitionMode.DONT_CHECK),
-          getPrerequisites(ruleContext, "deps", TransitionMode.DONT_CHECK));
+          getPrerequisites(ruleContext, "srcs"), getPrerequisites(ruleContext, "deps"));
     }
 
     /**
@@ -1175,9 +1048,9 @@ public final class Runfiles implements RunfilesApi {
      * <p>If the rule does not have the specified attribute, returns the empty list.
      */
     private static Iterable<? extends TransitiveInfoCollection> getPrerequisites(
-        RuleContext ruleContext, String attributeName, TransitionMode mode) {
+        RuleContext ruleContext, String attributeName) {
       if (ruleContext.getRule().isAttrDefined(attributeName, BuildType.LABEL_LIST)) {
-        return ruleContext.getPrerequisites(attributeName, mode);
+        return ruleContext.getPrerequisites(attributeName);
       } else {
         return Collections.emptyList();
       }
@@ -1218,7 +1091,7 @@ public final class Runfiles implements RunfilesApi {
     }
 
     for (Artifact artifact : getArtifacts().toList()) {
-      fp.addPath(artifact.getRootRelativePath());
+      fp.addPath(artifact.getRunfilesPath());
       fp.addPath(artifact.getExecPath());
     }
 

@@ -22,6 +22,7 @@ import com.google.devtools.build.lib.events.EventCollector;
 import com.google.devtools.build.lib.events.EventHandler;
 import com.google.devtools.build.lib.events.EventKind;
 import com.google.devtools.build.lib.events.Reporter;
+import com.google.devtools.build.lib.vfs.DigestHashFunction;
 import com.google.devtools.build.lib.vfs.FileSystem;
 import com.google.devtools.build.lib.vfs.Path;
 import com.google.devtools.build.lib.vfs.Root;
@@ -98,7 +99,7 @@ public abstract class FoundationTestCase {
    * Creates the file system; override to inject FS behavior.
    */
   protected FileSystem createFileSystem() {
-    return new InMemoryFileSystem(BlazeClock.instance());
+    return new InMemoryFileSystem(BlazeClock.instance(), DigestHashFunction.SHA256);
   }
 
   // Mix-in assertions:
@@ -148,15 +149,14 @@ public abstract class FoundationTestCase {
         "    source_version = '6',",
         "    target_version = '6',",
         "    bootclasspath = ['rt.jar'],",
-        "    extclasspath = ['ext/lib.jar'],",
         "    xlint = ['toto'],",
         "    misc = ['-Xmaxerrs 500'],",
         "    compatible_javacopts = {",
         "        'appengine': ['-XDappengineCompatible'],",
         "        'android': ['-XDandroidCompatible'],",
         "    },",
-        "    javac = [':javac_canary.jar'],",
-        "    javabuilder = [':JavaBuilderCanary_deploy.jar'],",
+        "    tools = [':javac_canary.jar'],",
+        "    javabuilder = [':JavaBuilder_deploy.jar'],",
         "    header_compiler = [':turbine_canary_deploy.jar'],",
         "    header_compiler_direct = [':turbine_graal'],",
         "    singlejar = ['SingleJar_deploy.jar'],",

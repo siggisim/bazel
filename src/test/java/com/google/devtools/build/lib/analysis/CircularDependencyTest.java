@@ -23,9 +23,12 @@ import static com.google.devtools.build.lib.packages.Type.STRING;
 import static org.junit.Assert.assertThrows;
 
 import com.google.common.collect.ImmutableMap;
+import com.google.common.collect.ImmutableSet;
 import com.google.devtools.build.lib.analysis.config.BuildConfiguration;
 import com.google.devtools.build.lib.analysis.config.BuildOptions;
+import com.google.devtools.build.lib.analysis.config.BuildOptionsView;
 import com.google.devtools.build.lib.analysis.config.CoreOptions;
+import com.google.devtools.build.lib.analysis.config.FragmentOptions;
 import com.google.devtools.build.lib.analysis.config.transitions.SplitTransition;
 import com.google.devtools.build.lib.analysis.config.transitions.TransitionFactory;
 import com.google.devtools.build.lib.analysis.util.BuildViewTestCase;
@@ -100,6 +103,26 @@ public class CircularDependencyTest extends BuildViewTestCase {
     }
     assertThat(foundEvent).isNotNull();
     assertThat(foundEvent.getLocation().toString()).isEqualTo("/workspace/cycle/BUILD:3:14");
+  }
+
+  @Test
+  public void cycleThroughVisibility() throws Exception {
+    String expectedEvent =
+        "in filegroup rule //cycle:v: cycle in dependency graph:\n"
+            + "    //cycle:v\n"
+            + "    //cycle:t\n"
+            + ".-> //cycle:v\n"
+            + "|   //cycle:t\n"
+            + "`-- //cycle:v\n"
+            + "The cycle is caused by a visibility edge from //cycle:t to the non-package_group"
+            + " target //cycle:v. Note that visibility labels are supposed to be package_group"
+            + " targets, which prevents cycles of this form.";
+    checkError(
+        "cycle",
+        "v",
+        expectedEvent,
+        "filegroup(name='t', visibility=[':v'])",
+        "filegroup(name='v', srcs=[':t'])");
   }
 
   /**
@@ -268,17 +291,24 @@ public class CircularDependencyTest extends BuildViewTestCase {
                         @Override
                         public SplitTransition create(AttributeTransitionData data) {
                           return new SplitTransition() {
+
+                            @Override
+                            public ImmutableSet<Class<? extends FragmentOptions>>
+                                requiresOptionFragments() {
+                              return ImmutableSet.of(CoreOptions.class);
+                            }
+
                             @Override
                             public Map<String, BuildOptions> split(
-                                BuildOptions options, EventHandler eventHandler) {
+                                BuildOptionsView options, EventHandler eventHandler) {
                               String define = data.attributes().get("define", STRING);
-                              BuildOptions newOptions = options.clone();
+                              BuildOptionsView newOptions = options.clone();
                               CoreOptions optionsFragment = newOptions.get(CoreOptions.class);
                               optionsFragment.commandLineBuildVariables =
                                   optionsFragment.commandLineBuildVariables.stream()
                                       .filter((pair) -> !pair.getKey().equals(define))
                                       .collect(toImmutableList());
-                              return ImmutableMap.of("define_cleaner", newOptions);
+                              return ImmutableMap.of("define_cleaner", newOptions.underlying());
                             }
                           };
                         }
@@ -290,7 +320,7 @@ public class CircularDependencyTest extends BuildViewTestCase {
                       }));
 
   @Override
-  protected ConfiguredRuleClassProvider getRuleClassProvider() {
+  protected ConfiguredRuleClassProvider createRuleClassProvider() {
     ConfiguredRuleClassProvider.Builder builder =
         new ConfiguredRuleClassProvider.Builder()
             .addRuleDefinition(NORMAL_DEPENDER)

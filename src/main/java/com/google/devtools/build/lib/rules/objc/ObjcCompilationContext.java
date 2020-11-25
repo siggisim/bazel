@@ -32,7 +32,7 @@ import java.util.List;
  */
 @Immutable
 public final class ObjcCompilationContext {
-  public static final ObjcCompilationContext EMPTY = builder(false).build();
+  public static final ObjcCompilationContext EMPTY = builder().build();
 
   private final ImmutableList<String> defines;
 
@@ -116,8 +116,8 @@ public final class ObjcCompilationContext {
         .addDeclaredIncludeSrcs(getPublicHeaders())
         .addDeclaredIncludeSrcs(getPrivateHeaders())
         .addDeclaredIncludeSrcs(getPublicTextualHeaders())
-        .addModularHdrs(ImmutableList.copyOf(getPublicHeaders()))
-        .addModularHdrs(ImmutableList.copyOf(getPrivateHeaders()))
+        .addModularPublicHdrs(ImmutableList.copyOf(getPublicHeaders()))
+        .addModularPrivateHdrs(ImmutableList.copyOf(getPrivateHeaders()))
         .addTextualHdrs(ImmutableList.copyOf(getPublicTextualHeaders()))
         .addIncludeDirs(getIncludes())
         .addSystemIncludeDirs(getSystemIncludes())
@@ -126,12 +126,12 @@ public final class ObjcCompilationContext {
     return builder.build();
   }
 
-  public static Builder builder(boolean compileInfoMigration) {
-    return new Builder(compileInfoMigration);
+  /** Create and return an initial empty Builder for ObjcCompilationContext. */
+  public static Builder builder() {
+    return new Builder();
   }
 
   static class Builder {
-    private final boolean compileInfoMigration;
     private final List<String> defines = new ArrayList<>();
     private final List<Artifact> publicHeaders = new ArrayList<>();
     private final List<Artifact> publicTextualHeaders = new ArrayList<>();
@@ -142,9 +142,7 @@ public final class ObjcCompilationContext {
     private final List<PathFragment> strictDependencyIncludes = new ArrayList<>();
     private final List<CcCompilationContext> depCcCompilationContexts = new ArrayList<>();
 
-    Builder(boolean compileInfoMigration) {
-      this.compileInfoMigration = compileInfoMigration;
-    }
+    Builder() {}
 
     public Builder addDefines(Iterable<String> defines) {
       Iterables.addAll(this.defines, defines);
@@ -183,9 +181,6 @@ public final class ObjcCompilationContext {
 
     public Builder addDepObjcProviders(Iterable<ObjcProvider> objcProviders) {
       for (ObjcProvider objcProvider : objcProviders) {
-        if (!compileInfoMigration) {
-          this.depCcCompilationContexts.add(objcProvider.getCcCompilationContext());
-        }
         this.strictDependencyIncludes.addAll(objcProvider.getStrictDependencyIncludes());
       }
       return this;

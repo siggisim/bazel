@@ -43,6 +43,12 @@ public interface PythonSemantics {
   void validate(RuleContext ruleContext, PyCommon common);
 
   /**
+   * Returns whether we are prohibiting hyphen ('-') characters in the package paths of Python
+   * targets and source files.
+   */
+  boolean prohibitHyphensInPackagePaths();
+
+  /**
    * Extends for the default and data runfiles of {@code py_binary} and {@code py_test} rules with
    * custom elements.
    */
@@ -61,14 +67,10 @@ public interface PythonSemantics {
   /** Collects a rule's default runfiles. */
   void collectDefaultRunfiles(RuleContext ruleContext, Runfiles.Builder builder);
 
-  /**
-   * Returns the coverage instrumentation specification to be used in Python rules.
-   */
+  /** Returns the coverage instrumentation specification to be used in Python rules. */
   InstrumentationSpec getCoverageInstrumentationSpec();
 
-  /**
-   * Utility function to compile multiple .py files to .pyc files, if required.
-   */
+  /** Utility function to compile multiple .py files to .pyc files, if required. */
   Collection<Artifact> precompiledPythonFiles(
       RuleContext ruleContext, Collection<Artifact> sources, PyCommon common);
 
@@ -93,4 +95,12 @@ public interface PythonSemantics {
       throws InterruptedException, RuleErrorException;
 
   CcInfo buildCcInfoProvider(Iterable<? extends TransitiveInfoCollection> deps);
+
+  /**
+   * Called when building executables or packages to fill in missing empty __init__.py files if the
+   * --incompatible_default_to_explicit_init_py has not yet been enabled. This usually returns a
+   * public static final reference, code is free to use that directly on specific implementations
+   * instead of making this call.
+   */
+  Runfiles.EmptyFilesSupplier getEmptyRunfilesSupplier();
 }

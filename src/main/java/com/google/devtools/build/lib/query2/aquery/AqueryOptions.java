@@ -49,14 +49,6 @@ public class AqueryOptions extends CommonQueryOptions {
   public boolean includeArtifacts;
 
   @Option(
-      name = "include_aspects",
-      defaultValue = "false",
-      documentationCategory = OptionDocumentationCategory.QUERY,
-      effectTags = {OptionEffectTag.TERMINAL_OUTPUT},
-      help = "Whether to include aspect generated actions in the output.")
-  public boolean useAspects;
-
-  @Option(
       name = "include_param_files",
       defaultValue = "false",
       documentationCategory = OptionDocumentationCategory.QUERY,
@@ -80,7 +72,7 @@ public class AqueryOptions extends CommonQueryOptions {
 
   @Option(
       name = "incompatible_proto_output_v2",
-      defaultValue = "false",
+      defaultValue = "true",
       documentationCategory = OptionDocumentationCategory.QUERY,
       effectTags = {OptionEffectTag.TERMINAL_OUTPUT},
       metadataTags = {

@@ -17,18 +17,17 @@ import com.google.common.base.Predicate;
 import com.google.common.collect.Sets;
 import com.google.devtools.build.lib.actions.Action;
 import com.google.devtools.build.lib.actions.ActionAnalysisMetadata;
-import com.google.devtools.build.lib.actions.ActionAnalysisMetadata.MiddlemanType;
 import com.google.devtools.build.lib.actions.ActionGraph;
 import com.google.devtools.build.lib.actions.ActionKeyContext;
 import com.google.devtools.build.lib.actions.Artifact;
 import com.google.devtools.build.lib.actions.CommandLineExpansionException;
+import com.google.devtools.build.lib.actions.MiddlemanType;
 import com.google.devtools.build.lib.actions.extra.DetailedExtraActionInfo;
 import com.google.devtools.build.lib.actions.extra.ExtraActionSummary;
 import com.google.devtools.build.lib.analysis.ConfiguredTarget;
 import com.google.devtools.build.lib.analysis.FileProvider;
 import com.google.devtools.build.lib.analysis.OutputGroupInfo;
 import com.google.devtools.build.lib.analysis.PrintActionVisitor;
-import com.google.devtools.build.lib.analysis.configuredtargets.RuleConfiguredTarget;
 import com.google.devtools.build.lib.buildtool.BuildRequest;
 import com.google.devtools.build.lib.buildtool.BuildResult;
 import com.google.devtools.build.lib.buildtool.BuildTool;
@@ -50,8 +49,11 @@ import com.google.devtools.build.lib.runtime.BlazeRuntime;
 import com.google.devtools.build.lib.runtime.Command;
 import com.google.devtools.build.lib.runtime.CommandEnvironment;
 import com.google.devtools.build.lib.runtime.KeepGoingOption;
+import com.google.devtools.build.lib.server.FailureDetails;
+import com.google.devtools.build.lib.server.FailureDetails.FailureDetail;
+import com.google.devtools.build.lib.server.FailureDetails.PrintActionCommand.Code;
 import com.google.devtools.build.lib.util.DetailedExitCode;
-import com.google.devtools.build.lib.util.ExitCode;
+import com.google.devtools.build.lib.util.InterruptedFailureDetails;
 import com.google.devtools.build.lib.util.io.OutErr;
 import com.google.devtools.common.options.Option;
 import com.google.devtools.common.options.OptionDocumentationCategory;
@@ -142,25 +144,38 @@ public final class PrintActionCommand implements BlazeCommand {
     }
 
     private DetailedExitCode printActionsForTargets(CommandEnvironment env) {
-      BuildResult result = gatherActionsForTargets(env, requestedTargets);
-      if (result == null) {
-        return DetailedExitCode.justExitCode(ExitCode.PARSING_FAILURE);
+      BuildResult result;
+      try {
+        result = gatherActionsForTargets(env, requestedTargets);
+      } catch (PrintActionException e) {
+        return DetailedExitCode.of(e.createFailureDetail());
+      } catch (InterruptedException e) {
+        String message = "print_action: action gathering interrupted";
+        env.getReporter().handle(Event.error(message));
+        return InterruptedFailureDetails.detailedExitCode(message);
       }
       if (hasFatalBuildFailure(result)) {
         env.getReporter().handle(Event.error("Build failed when printing actions"));
         return result.getDetailedExitCode();
       }
-      String action = TextFormat.printToString(summaryBuilder);
+      String action = TextFormat.printer().printToString(summaryBuilder);
       if (!action.isEmpty()) {
         outErr.printOut(action);
         return result.getDetailedExitCode();
       } else {
-        env.getReporter().handle(Event.error("no actions to print were found"));
-        return DetailedExitCode.justExitCode(ExitCode.PARSING_FAILURE);
+        String message = "no actions to print were found";
+        env.getReporter().handle(Event.error(message));
+        return DetailedExitCode.of(
+            FailureDetail.newBuilder()
+                .setMessage(message)
+                .setPrintActionCommand(
+                    FailureDetails.PrintActionCommand.newBuilder().setCode(Code.ACTIONS_NOT_FOUND))
+                .build());
       }
     }
 
-    private BuildResult gatherActionsForTargets(CommandEnvironment env, List<String> targets) {
+    private BuildResult gatherActionsForTargets(CommandEnvironment env, List<String> targets)
+        throws PrintActionException, InterruptedException {
       BlazeRuntime runtime = env.getRuntime();
       String commandName = PrintActionCommand.this.getClass().getAnnotation(Command.class).name();
       BuildRequest request = BuildRequest.create(commandName, options,
@@ -190,14 +205,15 @@ public final class PrintActionCommand implements BlazeCommand {
                   env.getSkyframeExecutor().getActionKeyContext(),
                   targets);
             } else {
-              Target target = null;
+              Target target;
               try {
                 target =
                     env.getPackageManager()
                         .getTarget(env.getReporter(), configuredTarget.getLabel());
-              } catch (NoSuchTargetException | NoSuchPackageException | InterruptedException e) {
-                env.getReporter().handle(Event.error("Failed to find target to gather actions."));
-                return null;
+              } catch (NoSuchTargetException | NoSuchPackageException e) {
+                String message = "Failed to find target to gather actions: " + e.getMessage();
+                env.getReporter().handle(Event.error(message));
+                throw new PrintActionException(message, Code.TARGET_NOT_FOUND);
               }
               gatherActionsForTarget(
                   configuredTarget,
@@ -206,30 +222,29 @@ public final class PrintActionCommand implements BlazeCommand {
                   env.getSkyframeExecutor().getActionKeyContext());
             }
           } catch (CommandLineExpansionException e) {
-            env.getReporter().handle(Event.error(null, "Error expanding command line: " + e));
-            return null;
+            String message = "Error expanding command line: " + e;
+            env.getReporter().handle(Event.error(null, message));
+            throw new PrintActionException(message, Code.COMMAND_LINE_EXPANSION_FAILURE);
           }
         } else {
-          env.getReporter().handle(Event.error(
-              null, configuredTarget + " is not a supported target kind"));
-          return null;
+          String message = configuredTarget + " is not a supported target kind";
+          env.getReporter().handle(Event.error(null, message));
+          throw new PrintActionException(message, Code.TARGET_KIND_UNSUPPORTED);
         }
       }
       return result;
     }
 
-    private BuildResult gatherActionsForFiles(
+    private void gatherActionsForFiles(
         ConfiguredTarget configuredTarget,
         CommandEnvironment env,
         ActionGraph actionGraph,
         ActionKeyContext actionKeyContext,
         List<String> files)
-        throws CommandLineExpansionException {
+        throws CommandLineExpansionException, InterruptedException {
       Set<String> filesDesired = new LinkedHashSet<>(files);
-      ActionFilter filter = new DefaultActionFilter(filesDesired, actionMnemonicMatcher);
-
+      ActionFilter filter = new ActionFilter(filesDesired, actionMnemonicMatcher);
       gatherActionsForFile(configuredTarget, filter, env, actionGraph, actionKeyContext);
-      return null;
     }
 
     private void gatherActionsForTarget(
@@ -237,7 +252,7 @@ public final class PrintActionCommand implements BlazeCommand {
         Target target,
         ActionGraph actionGraph,
         ActionKeyContext actionKeyContext)
-        throws CommandLineExpansionException {
+        throws CommandLineExpansionException, InterruptedException {
       if (!(target instanceof Rule)) {
         return;
       }
@@ -272,7 +287,7 @@ public final class PrintActionCommand implements BlazeCommand {
         CommandEnvironment env,
         ActionGraph actionGraph,
         ActionKeyContext actionKeyContext)
-        throws CommandLineExpansionException {
+        throws CommandLineExpansionException, InterruptedException {
       NestedSet<Artifact> artifacts = OutputGroupInfo.get(configuredTarget)
           .getOutputGroup(OutputGroupInfo.FILES_TO_COMPILE);
 
@@ -295,13 +310,6 @@ public final class PrintActionCommand implements BlazeCommand {
     private boolean hasFatalBuildFailure(BuildResult result) {
       return result.getActualTargets() == null || (!result.getSuccess() && !keepGoing);
     }
-  }
-
-  /** Filter for extra actions. */
-  private interface ActionFilter {
-    /** Returns true if the given action is not null and should be printed. */
-    boolean shouldOutput(
-        ActionAnalysisMetadata action, ConfiguredTarget configuredTarget, CommandEnvironment env);
   }
 
   /**
@@ -347,23 +355,22 @@ public final class PrintActionCommand implements BlazeCommand {
    * addition, this also handles C++ header files, which are not considered to be action inputs by
    * blaze (due to include scanning).
    *
-   * <p>
-   * As caveats, this only works for files that are given as proper relative paths, rather than
+   * <p>As caveats, this only works for files that are given as proper relative paths, rather than
    * using target syntax, and only if the current working directory is the client root.
    */
-  private static class DefaultActionFilter implements ActionFilter {
+  private static class ActionFilter {
     private final Set<String> filesDesired;
     private final Predicate<ActionAnalysisMetadata> actionMnemonicMatcher;
 
-    private DefaultActionFilter(Set<String> filesDesired,
-        Predicate<ActionAnalysisMetadata> actionMnemonicMatcher) {
+    private ActionFilter(
+        Set<String> filesDesired, Predicate<ActionAnalysisMetadata> actionMnemonicMatcher) {
       this.filesDesired = filesDesired;
       this.actionMnemonicMatcher = actionMnemonicMatcher;
     }
 
-    @Override
     public boolean shouldOutput(
-        ActionAnalysisMetadata action, ConfiguredTarget configuredTarget, CommandEnvironment env) {
+        ActionAnalysisMetadata action, ConfiguredTarget configuredTarget, CommandEnvironment env)
+        throws InterruptedException {
       if (action == null) {
         return false;
       }
@@ -381,21 +388,21 @@ public final class PrintActionCommand implements BlazeCommand {
 
       // C++ header files show up in the dependency on the Target, but not the ConfiguredTarget, so
       // we also check the target's header files there.
-      RuleConfiguredTarget ruleConfiguredTarget = (RuleConfiguredTarget) configuredTarget;
       Rule rule;
       try {
         rule =
             (Rule)
                 env.getPackageManager().getTarget(env.getReporter(), configuredTarget.getLabel());
-      } catch (NoSuchTargetException | NoSuchPackageException | InterruptedException e) {
+      } catch (NoSuchTargetException | NoSuchPackageException e) {
         env.getReporter().handle(Event.error("Failed to find target to determine output."));
         return false;
       }
       if (!rule.isAttrDefined("hdrs", BuildType.LABEL_LIST)) {
         return false;
       }
+
       List<Label> hdrs =
-          ConfiguredAttributeMapper.of(rule, ruleConfiguredTarget.getConfigConditions())
+          ConfiguredAttributeMapper.of(rule, configuredTarget.getConfigConditions())
               .get("hdrs", BuildType.LABEL_LIST);
       if (hdrs != null) {
         for (Label hdrLabel : hdrs) {
@@ -405,6 +412,23 @@ public final class PrintActionCommand implements BlazeCommand {
         }
       }
       return false; // no match
+    }
+  }
+
+  private static class PrintActionException extends Exception {
+    private final FailureDetails.PrintActionCommand.Code detailedCode;
+
+    private PrintActionException(String message, Code detailedCode) {
+      super(message);
+      this.detailedCode = detailedCode;
+    }
+
+    private FailureDetail createFailureDetail() {
+      return FailureDetail.newBuilder()
+          .setMessage(getMessage())
+          .setPrintActionCommand(
+              FailureDetails.PrintActionCommand.newBuilder().setCode(detailedCode))
+          .build();
     }
   }
 }

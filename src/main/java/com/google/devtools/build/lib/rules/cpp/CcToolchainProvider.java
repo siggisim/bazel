@@ -20,6 +20,7 @@ import com.google.common.collect.ImmutableMap;
 import com.google.devtools.build.lib.actions.Artifact;
 import com.google.devtools.build.lib.analysis.LicensesProvider;
 import com.google.devtools.build.lib.analysis.PackageSpecificationProvider;
+import com.google.devtools.build.lib.analysis.RuleErrorConsumer;
 import com.google.devtools.build.lib.analysis.config.BuildConfiguration;
 import com.google.devtools.build.lib.analysis.config.BuildOptions;
 import com.google.devtools.build.lib.analysis.platform.ToolchainInfo;
@@ -30,16 +31,17 @@ import com.google.devtools.build.lib.collect.nestedset.NestedSetBuilder;
 import com.google.devtools.build.lib.collect.nestedset.Order;
 import com.google.devtools.build.lib.concurrent.ThreadSafety.Immutable;
 import com.google.devtools.build.lib.packages.RuleClass.ConfiguredTargetFactory.RuleErrorException;
-import com.google.devtools.build.lib.packages.RuleErrorConsumer;
 import com.google.devtools.build.lib.rules.cpp.CcToolchain.AdditionalBuildVariablesComputer;
 import com.google.devtools.build.lib.rules.cpp.CcToolchainFeatures.FeatureConfiguration;
 import com.google.devtools.build.lib.rules.cpp.CppConfiguration.Tool;
 import com.google.devtools.build.lib.skyframe.serialization.autocodec.AutoCodec;
-import com.google.devtools.build.lib.skylarkbuildapi.cpp.CcToolchainProviderApi;
-import com.google.devtools.build.lib.syntax.EvalException;
-import com.google.devtools.build.lib.syntax.Location;
+import com.google.devtools.build.lib.starlarkbuildapi.cpp.CcToolchainProviderApi;
 import com.google.devtools.build.lib.vfs.PathFragment;
 import javax.annotation.Nullable;
+import net.starlark.java.eval.EvalException;
+import net.starlark.java.eval.Starlark;
+import net.starlark.java.eval.StarlarkThread;
+import net.starlark.java.syntax.Location;
 
 /** Information about a C++ compiler used by the <code>cc_*</code> rules. */
 @Immutable
@@ -103,7 +105,8 @@ public final class CcToolchainProvider extends ToolchainInfo
           /* targetSystemName= */ "",
           /* additionalMakeVariables= */ ImmutableMap.of(),
           /* legacyCcFlagsMakeVariable= */ "",
-          /* whitelistForLayeringCheck= */ null);
+          /* allowlistForLayeringCheck= */ null,
+          /* allowListForLooseHeaderCheck= */ null);
 
   @Nullable private final CppConfiguration cppConfiguration;
   private final PathFragment crosstoolTopPathFragment;
@@ -165,7 +168,8 @@ public final class CcToolchainProvider extends ToolchainInfo
   private final FdoContext fdoContext;
 
   private final LicensesProvider licensesProvider;
-  private final PackageSpecificationProvider whitelistForLayeringCheck;
+  private final PackageSpecificationProvider allowlistForLayeringCheck;
+  private final PackageSpecificationProvider allowListForLooseHeaderCheck;
 
   public CcToolchainProvider(
       ImmutableMap<String, Object> values,
@@ -221,7 +225,8 @@ public final class CcToolchainProvider extends ToolchainInfo
       String targetSystemName,
       ImmutableMap<String, String> additionalMakeVariables,
       String legacyCcFlagsMakeVariable,
-      PackageSpecificationProvider whitelistForLayeringCheck) {
+      PackageSpecificationProvider allowlistForLayeringCheck,
+      PackageSpecificationProvider allowListForLooseHeaderCheck) {
     super(values, Location.BUILTIN);
     this.cppConfiguration = cppConfiguration;
     this.crosstoolTopPathFragment = crosstoolTopPathFragment;
@@ -278,7 +283,8 @@ public final class CcToolchainProvider extends ToolchainInfo
     this.targetSystemName = targetSystemName;
     this.additionalMakeVariables = additionalMakeVariables;
     this.legacyCcFlagsMakeVariable = legacyCcFlagsMakeVariable;
-    this.whitelistForLayeringCheck = whitelistForLayeringCheck;
+    this.allowlistForLayeringCheck = allowlistForLayeringCheck;
+    this.allowListForLooseHeaderCheck = allowListForLooseHeaderCheck;
   }
 
   /**
@@ -414,6 +420,15 @@ public final class CcToolchainProvider extends ToolchainInfo
     return toolPathFragment == null ? null : toolPathFragment.getPathString();
   }
 
+  @Override
+  public String getToolPathStringOrNoneForStarlark(String toolString, StarlarkThread thread)
+      throws EvalException {
+    CcModule.checkPrivateStarlarkificationAllowlist(thread);
+    Tool tool = Tool.valueOf(toolString);
+    PathFragment toolPathFragment = getToolPathFragmentOrNull(tool);
+    return toolPathFragment == null ? null : toolPathFragment.getPathString();
+  }
+
   /**
    * Returns the path fragment that is either absolute or relative to the execution root that can be
    * used to execute the given tool.
@@ -499,12 +514,24 @@ public final class CcToolchainProvider extends ToolchainInfo
     return objcopyFiles;
   }
 
+  @Override
+  public Depset getObjcopyFilesForStarlark(StarlarkThread thread) throws EvalException {
+    CcModule.checkPrivateStarlarkificationAllowlist(thread);
+    return Depset.of(Artifact.TYPE, getObjcopyFiles());
+  }
+
   /**
    * Returns the files necessary for an 'as' invocation. May be empty if the CROSSTOOL file does not
    * define as_files.
    */
   public NestedSet<Artifact> getAsFiles() {
     return asFiles;
+  }
+
+  @Override
+  public Depset getAsFilesForStarlark(StarlarkThread thread) throws EvalException {
+    CcModule.checkPrivateStarlarkificationAllowlist(thread);
+    return Depset.of(Artifact.TYPE, getAsFiles());
   }
 
   /**
@@ -515,9 +542,21 @@ public final class CcToolchainProvider extends ToolchainInfo
     return arFiles;
   }
 
+  @Override
+  public Depset getArFilesForStarlark(StarlarkThread thread) throws EvalException {
+    CcModule.checkPrivateStarlarkificationAllowlist(thread);
+    return Depset.of(Artifact.TYPE, getArFiles());
+  }
+
   /** Returns the files necessary for linking, including the files needed for libc. */
   public NestedSet<Artifact> getLinkerFiles() {
     return linkerFiles;
+  }
+
+  @Override
+  public Depset getLinkerFilesForStarlark(StarlarkThread thread) throws EvalException {
+    CcModule.checkPrivateStarlarkificationAllowlist(thread);
+    return Depset.of(Artifact.TYPE, getLinkerFiles());
   }
 
   public NestedSet<Artifact> getDwpFiles() {
@@ -527,6 +566,12 @@ public final class CcToolchainProvider extends ToolchainInfo
   /** Returns the files necessary for capturing code coverage. */
   public NestedSet<Artifact> getCoverageFiles() {
     return coverageFiles;
+  }
+
+  @Override
+  public Depset getCoverageFilesForStarlark(StarlarkThread thread) throws EvalException {
+    CcModule.checkPrivateStarlarkificationAllowlist(thread);
+    return Depset.of(Artifact.TYPE, getCoverageFiles());
   }
 
   public NestedSet<Artifact> getLibcLink(CppConfiguration cppConfiguration) {
@@ -551,10 +596,9 @@ public final class CcToolchainProvider extends ToolchainInfo
       throws EvalException {
     if (shouldStaticallyLinkCppRuntimes(featureConfiguration)) {
       if (staticRuntimeLinkInputs == null) {
-        throw new EvalException(
-            Location.BUILTIN,
-            "Toolchain supports embedded runtimes, but didn't "
-                + "provide static_runtime_lib attribute.");
+        throw Starlark.errorf(
+            "Toolchain supports embedded runtimes, but didn't provide static_runtime_lib"
+                + " attribute.");
       }
       return staticRuntimeLinkInputs;
     } else {
@@ -585,9 +629,8 @@ public final class CcToolchainProvider extends ToolchainInfo
     if (shouldStaticallyLinkCppRuntimes(featureConfiguration)) {
       if (dynamicRuntimeLinkInputs == null) {
         throw new EvalException(
-            Location.BUILTIN,
-            "Toolchain supports embedded runtimes, but didn't "
-                + "provide dynamic_runtime_lib attribute.");
+            "Toolchain supports embedded runtimes, but didn't provide dynamic_runtime_lib"
+                + " attribute.");
       }
       return dynamicRuntimeLinkInputs;
     } else {
@@ -621,6 +664,12 @@ public final class CcToolchainProvider extends ToolchainInfo
     return dynamicRuntimeSolibDir;
   }
 
+  @Override
+  public String getDynamicRuntimeSolibDirForStarlark(StarlarkThread thread) throws EvalException {
+    CcModule.checkPrivateStarlarkificationAllowlist(thread);
+    return getDynamicRuntimeSolibDir().getPathString();
+  }
+
   /** Returns the {@code CcCompilationContext} for the toolchain. */
   public CcCompilationContext getCcCompilationContext() {
     return ccInfo.getCcCompilationContext();
@@ -646,6 +695,7 @@ public final class CcToolchainProvider extends ToolchainInfo
     return toolchainFeatures;
   }
 
+  @Override
   public Label getCcToolchainLabel() {
     return ccToolchainLabel;
   }
@@ -665,6 +715,12 @@ public final class CcToolchainProvider extends ToolchainInfo
    */
   public String getSolibDirectory() {
     return solibDirectory;
+  }
+
+  @Override
+  public String getSolibDirectoryForStarlark(StarlarkThread thread) throws EvalException {
+    CcModule.checkPrivateStarlarkificationAllowlist(thread);
+    return getSolibDirectory();
   }
 
   /** Returns whether the toolchain supports dynamic linking. */
@@ -910,8 +966,12 @@ public final class CcToolchainProvider extends ToolchainInfo
     return dynamicRuntimeLinkInputs;
   }
 
-  public PackageSpecificationProvider getWhitelistForLayeringCheck() {
-    return whitelistForLayeringCheck;
+  public PackageSpecificationProvider getAllowlistForLayeringCheck() {
+    return allowlistForLayeringCheck;
+  }
+
+  public PackageSpecificationProvider getAllowlistForLooseHeaderCheck() {
+    return allowListForLooseHeaderCheck;
   }
 }
 

@@ -29,6 +29,7 @@ import com.android.aapt.Resources.Plural;
 import com.android.aapt.Resources.Reference;
 import com.android.aapt.Resources.ResourceTable;
 import com.android.aapt.Resources.Style;
+import com.android.aapt.Resources.ToolFingerprint;
 import com.android.aapt.Resources.Type;
 import com.android.aapt.Resources.Value;
 import com.android.aapt.Resources.XmlAttribute;
@@ -37,6 +38,8 @@ import com.android.aapt.Resources.XmlNamespace;
 import com.android.aapt.Resources.XmlNode;
 import com.android.resources.ResourceType;
 import com.google.common.base.Preconditions;
+import com.google.common.base.Supplier;
+import com.google.common.base.Suppliers;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.io.ByteStreams;
@@ -48,6 +51,7 @@ import java.io.Closeable;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
+import java.io.UncheckedIOException;
 import java.io.UnsupportedEncodingException;
 import java.net.URI;
 import java.nio.ByteBuffer;
@@ -87,10 +91,22 @@ public class ProtoApk implements Closeable {
 
   private final URI uri;
   private final FileSystem apkFileSystem;
+  private final Supplier<ResourceTable> resourceTableSupplier;
 
   private ProtoApk(URI uri, FileSystem apkFileSystem) {
     this.uri = uri;
     this.apkFileSystem = apkFileSystem;
+    this.resourceTableSupplier =
+        Suppliers.memoize(
+            () -> {
+              try {
+                return ResourceTable.parseFrom(
+                    Files.newInputStream(apkFileSystem.getPath(RESOURCE_TABLE)),
+                    ExtensionRegistry.getEmptyRegistry());
+              } catch (IOException e) {
+                throw new UncheckedIOException(e);
+              }
+            });
   }
 
   /** Reads a ProtoApk from a path and verifies that it is in the expected format. */
@@ -121,12 +137,16 @@ public class ProtoApk implements Closeable {
     final URI dstZipUri = URI.create("jar:" + destination.toUri());
     try (final ZipFile srcZip = new ZipFile(uri.getPath());
         final UniqueZipBuilder dstZip = UniqueZipBuilder.createFor(destination)) {
-      final ResourceTable.Builder dstTableBuilder = ResourceTable.newBuilder();
-      final ResourceTable resourceTable =
-          ResourceTable.parseFrom(
-              Files.newInputStream(apkFileSystem.getPath(RESOURCE_TABLE)),
-              ExtensionRegistry.getEmptyRegistry());
-      dstTableBuilder.setSourcePool(resourceTable.getSourcePool());
+      final ResourceTable resourceTable = getResourceTable();
+      final ResourceTable.Builder dstTableBuilder =
+          resourceTable.toBuilder()
+              .addToolFingerprint(
+                  ToolFingerprint.newBuilder().setTool("ResourceProcessorBusyBox")
+                  // NB: "stamp" information should go here, but that's not available:
+                  // https://github.com/bazelbuild/bazel/blob/78bb263e46bf301900c1d4b1e04fabf3a6854762/src/main/java/com/google/devtools/build/lib/bazel/rules/java/BazelJavaRuleClasses.java#L380
+                  );
+
+      dstTableBuilder.clearPackage(); // we'll add these back, with filtering below
       for (Package pkg : resourceTable.getPackageList()) {
         Package dstPkg = copyPackage(resourceFilter, dstZip, pkg);
         dstTableBuilder.addPackage(dstPkg);
@@ -218,6 +238,10 @@ public class ProtoApk implements Closeable {
     try (InputStream in = Files.newInputStream(apkFileSystem.getPath(MANIFEST))) {
       return XmlNode.parseFrom(in, ExtensionRegistry.getEmptyRegistry());
     }
+  }
+
+  ResourceTable getResourceTable() throws IOException {
+    return resourceTableSupplier.get();
   }
 
   /** Copy manifest as xml to an external directory. */
@@ -370,11 +394,7 @@ public class ProtoApk implements Closeable {
     visitXmlResource(apkFileSystem.getPath(MANIFEST), visitor.enteringManifest());
 
     // visit resource table and associated files.
-    final ResourceTable resourceTable =
-        ResourceTable.parseFrom(
-            Files.newInputStream(apkFileSystem.getPath(RESOURCE_TABLE)),
-            ExtensionRegistry.getEmptyRegistry());
-
+    final ResourceTable resourceTable = getResourceTable();
     final List<String> sourcePool =
         resourceTable.hasSourcePool()
             ? decodeSourcePool(resourceTable.getSourcePool().getData().toByteArray())

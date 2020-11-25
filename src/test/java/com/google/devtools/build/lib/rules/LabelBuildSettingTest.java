@@ -29,8 +29,6 @@ import org.junit.runners.JUnit4;
 public class LabelBuildSettingTest extends BuildViewTestCase {
 
   private void writeRulesBzl(String type) throws Exception {
-    setStarlarkSemanticsOptions("--experimental_build_setting_api=True");
-
     scratch.file(
         "test/rules.bzl",
         "def _my_rule_impl(ctx):",
@@ -196,9 +194,9 @@ public class LabelBuildSettingTest extends BuildViewTestCase {
   @Test
   public void transitionTypeParsing() throws Exception {
     scratch.file(
-        "tools/whitelists/function_transition_whitelist/BUILD",
+        "tools/allowlists/function_transition_allowlist/BUILD",
         "package_group(",
-        "    name = 'function_transition_whitelist',",
+        "    name = 'function_transition_allowlist',",
         "    packages = [",
         "        '//test/...',",
         "    ],",
@@ -222,8 +220,8 @@ public class LabelBuildSettingTest extends BuildViewTestCase {
         "    implementation = _rule_impl,",
         "    cfg = _my_transition,",
         "    attrs = {",
-        "        '_whitelist_function_transition': attr.label(",
-        "            default = '//tools/whitelists/function_transition_whitelist',",
+        "        '_allowlist_function_transition': attr.label(",
+        "            default = '//tools/allowlists/function_transition_allowlist',",
         "        ),",
         "    }",
         ")");
@@ -242,9 +240,9 @@ public class LabelBuildSettingTest extends BuildViewTestCase {
   @Test
   public void transitionsDontAllowRelativeLabels() throws Exception {
     scratch.file(
-        "tools/whitelists/function_transition_whitelist/BUILD",
+        "tools/allowlists/function_transition_allowlist/BUILD",
         "package_group(",
-        "    name = 'function_transition_whitelist',",
+        "    name = 'function_transition_allowlist',",
         "    packages = [",
         "        '//test/...',",
         "    ],",
@@ -267,8 +265,8 @@ public class LabelBuildSettingTest extends BuildViewTestCase {
         "    implementation = _rule_impl,",
         "    cfg = _my_transition,",
         "    attrs = {",
-        "        '_whitelist_function_transition': attr.label(",
-        "            default = '//tools/whitelists/function_transition_whitelist',",
+        "        '_allowlist_function_transition': attr.label(",
+        "            default = '//tools/allowlists/function_transition_allowlist',",
         "        ),",
         "    }",
         ")");

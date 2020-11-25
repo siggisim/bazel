@@ -29,11 +29,6 @@ filegroup(
             ":without-jdk/install.sh",
             ":generate-package-info",
         ],
-        "//src/conditions:darwin_x86_64": [
-            ":with-jdk/install.sh",
-            ":without-jdk/install.sh",
-            ":generate-package-info",
-        ],
         "//conditions:default": [
             ":with-jdk/install.sh",
             ":without-jdk/install.sh",
@@ -130,6 +125,7 @@ genrule(
         ":%s/bazel-real" % kind,
         ":%s/bazel" % kind,
         "//scripts:bash_completion",
+        "//scripts:bazel.fish",
         "//scripts/zsh_completion:_bazel",
     ],
     launcher = ":launcher_bin.sh",

@@ -69,7 +69,8 @@ public final class ObjcProtoAspectTest extends ObjcRuleTestCase {
     assertThat(objcProtoProvider).isNotNull();
   }
 
-  private void testObjcProtoAspectPropagatesProtobufProvider() throws Exception {
+  @Test
+  public void testObjcProtoAspectPropagatesProtobufProvider() throws Exception {
     MockObjcSupport.setupObjcProtoLibrary(scratch);
     scratch.file("x/data_filter.pbascii");
     scratch.file(
@@ -100,18 +101,6 @@ public final class ObjcProtoAspectTest extends ObjcRuleTestCase {
 
     assertThat(objcProtoProvider.getProtobufHeaderSearchPaths().toList())
         .containsExactly(includePath, genIncludePath);
-  }
-
-  @Test
-  public void testObjcProtoAspectPropagatesProtobufProviderPreMigration() throws Exception {
-    useConfiguration("--incompatible_objc_compile_info_migration=false");
-    testObjcProtoAspectPropagatesProtobufProvider();
-  }
-
-  @Test
-  public void testObjcProtoAspectPropagatesProtobufProviderPostMigration() throws Exception {
-    useConfiguration("--incompatible_objc_compile_info_migration=true");
-    testObjcProtoAspectPropagatesProtobufProvider();
   }
 
   @Test
@@ -246,9 +235,9 @@ public final class ObjcProtoAspectTest extends ObjcRuleTestCase {
   public void testObjcProtoAspectPropagatesProviderThroughStarlarkRule() throws Exception {
     MockObjcSupport.setupObjcProtoLibrary(scratch);
     scratch.file("x/data_filter.pbascii");
-    scratch.file("test_skylark/BUILD");
+    scratch.file("test_starlark/BUILD");
     scratch.file(
-        "test_skylark/top_level_stub.bzl",
+        "test_starlark/top_level_stub.bzl",
         "MyInfo = provider()",
         "def top_level_stub_impl(ctx):",
         "  deps = hasattr(ctx.attr.deps[0], 'ObjcProto')",
@@ -279,7 +268,7 @@ public final class ObjcProtoAspectTest extends ObjcRuleTestCase {
 
     scratch.file(
         "bin/BUILD",
-        "load('//test_skylark:top_level_stub.bzl', 'top_level_stub')",
+        "load('//test_starlark:top_level_stub.bzl', 'top_level_stub')",
         "top_level_stub(",
         "  name = 'link_target',",
         "  deps = ['//x:x'],",
@@ -289,7 +278,7 @@ public final class ObjcProtoAspectTest extends ObjcRuleTestCase {
 
     Provider.Key key =
         new StarlarkProvider.Key(
-            Label.parseAbsolute("//test_skylark:top_level_stub.bzl", ImmutableMap.of()), "MyInfo");
+            Label.parseAbsolute("//test_starlark:top_level_stub.bzl", ImmutableMap.of()), "MyInfo");
     StructImpl info = (StructImpl) topTarget.get(key);
 
     ConfiguredTarget depTarget = (ConfiguredTarget) info.getValue("dep");

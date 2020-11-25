@@ -29,11 +29,12 @@ java_library(
         "//src/java_tools/buildjar:buildjar_package_group",
         "//src/test/java/com/google/devtools/build/lib:__subpackages__",
     ],
-    deps = [
-        ":javac_options",
-        "//third_party:guava",
-        "//third_party:jsr305",
-    ],
+    deps =
+        [
+            ":javac_options",
+            "//third_party:guava",
+            "//third_party:jsr305",
+        ],
 )
 
 JAVAC_OPTIONS_SRCS = [
@@ -62,10 +63,7 @@ java_library(
 alias(
     name = "jarhelper",
     actual = "//src/java_tools/buildjar/java/com/google/devtools/build/buildjar/jarhelper",
-    visibility = [
-        "//src/java_tools/buildjar:buildjar_package_group",
-        "//src/tools/android:__subpackages__",
-    ],
+    visibility = ["//visibility:public"],
 )
 
 # Bazel's BuildJar
@@ -92,11 +90,10 @@ java_library(
         "//src/java_tools/buildjar/java/com/google/devtools/build/buildjar/javac/plugins:errorprone",
         "//src/java_tools/buildjar/java/com/google/devtools/build/buildjar/javac/plugins:processing",
         "//src/java_tools/buildjar/java/com/google/devtools/build/buildjar/javac/statistics",
-        "//src/main/protobuf:worker_protocol_java_proto",
+        "//src/main/java/com/google/devtools/build/lib/worker:work_request_handlers",
         "//third_party:guava",
         "//third_party:jsr305",
         "//third_party/java/jacoco:core",
-        "//third_party/java/jdk/langtools:javac",
     ],
 )
 
@@ -156,7 +153,7 @@ java_library(
 #
 
 bootstrap_java_library(
-    name = "skylark-deps",
+    name = "starlark-deps",
     srcs = ["//:bootstrap-derived-java-srcs"],
     jars = [
         "//third_party:auto_value-jars",
@@ -201,7 +198,7 @@ bootstrap_java_binary(
     main_class = "com.google.devtools.build.buildjar.VanillaJavaBuilder",
     tags = ["manual"],
     deps = [
-        ":skylark-deps",
+        ":starlark-deps",
         "//src/java_tools/buildjar/java/com/google/devtools/build/buildjar/jarhelper:bootstrap_jarhelper",
     ],
 )

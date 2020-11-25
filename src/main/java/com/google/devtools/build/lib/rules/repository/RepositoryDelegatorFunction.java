@@ -18,7 +18,6 @@ package com.google.devtools.build.lib.rules.repository;
 import static com.google.devtools.build.lib.rules.repository.RepositoryDirectoryDirtinessChecker.managedDirectoriesExist;
 
 import com.google.common.annotations.VisibleForTesting;
-import com.google.common.base.Optional;
 import com.google.common.base.Preconditions;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.ImmutableSet;
@@ -35,6 +34,7 @@ import com.google.devtools.build.lib.repository.ExternalPackageException;
 import com.google.devtools.build.lib.repository.ExternalPackageHelper;
 import com.google.devtools.build.lib.repository.ExternalRuleNotFoundException;
 import com.google.devtools.build.lib.repository.RepositoryFailedEvent;
+import com.google.devtools.build.lib.rules.repository.RepositoryFunction.AlreadyReportedRepositoryAccessException;
 import com.google.devtools.build.lib.rules.repository.RepositoryFunction.RepositoryFunctionException;
 import com.google.devtools.build.lib.skyframe.ManagedDirectoriesKnowledge;
 import com.google.devtools.build.lib.skyframe.PrecomputedValue.Precomputed;
@@ -44,7 +44,6 @@ import com.google.devtools.build.lib.vfs.Path;
 import com.google.devtools.build.lib.vfs.PathFragment;
 import com.google.devtools.build.lib.vfs.RootedPath;
 import com.google.devtools.build.skyframe.SkyFunction;
-import com.google.devtools.build.skyframe.SkyFunctionException;
 import com.google.devtools.build.skyframe.SkyFunctionException.Transience;
 import com.google.devtools.build.skyframe.SkyKey;
 import com.google.devtools.build.skyframe.SkyValue;
@@ -53,6 +52,7 @@ import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.Set;
 import java.util.TreeMap;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -187,7 +187,7 @@ public final class RepositoryDelegatorFunction implements SkyFunction {
 
   @Override
   public SkyValue compute(SkyKey skyKey, Environment env)
-      throws SkyFunctionException, InterruptedException {
+      throws InterruptedException, RepositoryFunctionException {
     RepositoryName repositoryName = (RepositoryName) skyKey.argument();
 
     Map<RepositoryName, PathFragment> overrides = REPOSITORY_OVERRIDES.get(env);
@@ -207,11 +207,11 @@ public final class RepositoryDelegatorFunction implements SkyFunction {
     Rule rule;
     try {
       rule = getRepository(repositoryName, env);
-    } catch (ExternalRuleNotFoundException e) {
+      if (rule == null) {
+        return null;
+      }
+    } catch (NoSuchRepositoryException e) {
       return RepositoryDirectoryValue.NO_SUCH_REPOSITORY_VALUE;
-    }
-    if (rule == null) {
-      return null;
     }
 
     RepositoryFunction handler = getHandler(rule);
@@ -337,7 +337,7 @@ public final class RepositoryDelegatorFunction implements SkyFunction {
       Map<String, String> markerData,
       RepositoryFunction handler,
       Rule rule)
-      throws SkyFunctionException, InterruptedException {
+      throws InterruptedException, RepositoryFunctionException {
 
     setupRepositoryRoot(repoRoot);
 
@@ -347,11 +347,16 @@ public final class RepositoryDelegatorFunction implements SkyFunction {
     RepositoryDirectoryValue.Builder repoBuilder;
     try {
       repoBuilder = handler.fetch(rule, repoRoot, directories, env, markerData, skyKey);
-    } catch (SkyFunctionException e) {
+    } catch (RepositoryFunctionException e) {
       // Upon an exceptional exit, the fetching of that repository is over as well.
       env.getListener().post(new RepositoryFetching(repositoryName, true));
       env.getListener().post(new RepositoryFailedEvent(repositoryName, e.getMessage()));
-      throw e;
+      env.getListener().handle(Event.error("Error fetching repository: " + e.getMessage()));
+
+      // Rewrap the underlying exception to signal callers not to re-report this error.
+      throw new RepositoryFunctionException(
+          new AlreadyReportedRepositoryAccessException(e.getCause()),
+          e.isTransient() ? Transience.TRANSIENT : Transience.PERSISTENT);
     }
 
     if (env.valuesMissing()) {
@@ -369,9 +374,19 @@ public final class RepositoryDelegatorFunction implements SkyFunction {
    */
   @Nullable
   private Rule getRepository(RepositoryName repositoryName, Environment env)
-      throws ExternalPackageException, InterruptedException {
-    return externalPackageHelper.getRuleByName(repositoryName.strippedName(), env);
+      throws InterruptedException, RepositoryFunctionException, NoSuchRepositoryException {
+    try {
+      return externalPackageHelper.getRuleByName(repositoryName.strippedName(), env);
+    } catch (ExternalRuleNotFoundException e) {
+      // This is caught and handled immediately in compute().
+      throw new NoSuchRepositoryException();
+    } catch (ExternalPackageException e) {
+      throw new RepositoryFunctionException(e);
+    }
   }
+
+  /** Marker exception for the case where a repository is not defined. */
+  private static final class NoSuchRepositoryException extends Exception {}
 
   @Override
   public String extractTag(SkyKey skyKey) {
@@ -564,7 +579,7 @@ public final class RepositoryDelegatorFunction implements SkyFunction {
     }
   }
 
-  private class RepositoryFetching implements FetchProgress {
+  private static class RepositoryFetching implements FetchProgress {
     final String id;
     final boolean finished;
     final String message;

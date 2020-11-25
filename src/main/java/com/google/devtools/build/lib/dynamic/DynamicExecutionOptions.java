@@ -59,7 +59,7 @@ public class DynamicExecutionOptions extends OptionsBase {
       name = "legacy_spawn_scheduler",
       documentationCategory = OptionDocumentationCategory.UNDOCUMENTED,
       effectTags = {OptionEffectTag.UNKNOWN},
-      defaultValue = "true",
+      defaultValue = "false",
       help =
           "Enables the old but tested implementation of the spawn scheduler. This differs from the "
               + "new version in that this version cannot stop a local spawn once it has started "
@@ -76,7 +76,7 @@ public class DynamicExecutionOptions extends OptionsBase {
       allowMultiple = true,
       help =
           "The local strategies, in order, to use for the given mnemonic. Passing"
-              + " 'remote' as the mnemonic sets the default for unspecified mnemonics. Takes"
+              + " 'local' as the mnemonic sets the default for unspecified mnemonics. Takes"
               + " [mnemonic=]local_strategy[,local_strategy,...]")
   public List<Map.Entry<String, List<String>>> dynamicLocalStrategy;
 

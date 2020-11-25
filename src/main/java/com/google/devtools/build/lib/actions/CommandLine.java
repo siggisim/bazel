@@ -22,6 +22,7 @@ import com.google.devtools.build.lib.collect.IterablesChain;
 import com.google.devtools.build.lib.skyframe.serialization.autocodec.AutoCodec;
 import com.google.devtools.build.lib.skyframe.serialization.autocodec.AutoCodec.VisibleForSerialization;
 import com.google.devtools.build.lib.util.Fingerprint;
+import javax.annotation.Nullable;
 
 /** A representation of a list of arguments. */
 public abstract class CommandLine {
@@ -29,7 +30,7 @@ public abstract class CommandLine {
   @VisibleForSerialization
   static class EmptyCommandLine extends CommandLine {
     @Override
-    public Iterable<String> arguments() throws CommandLineExpansionException {
+    public Iterable<String> arguments() {
       return ImmutableList.of();
     }
   }
@@ -37,7 +38,8 @@ public abstract class CommandLine {
   public static final CommandLine EMPTY = new EmptyCommandLine();
 
   /** Returns the command line. */
-  public abstract Iterable<String> arguments() throws CommandLineExpansionException;
+  public abstract Iterable<String> arguments()
+      throws CommandLineExpansionException, InterruptedException;
 
   /**
    * Returns the evaluated command line with enclosed artifacts expanded by {@code artifactExpander}
@@ -48,12 +50,23 @@ public abstract class CommandLine {
    * need to expand them for proper argument evaluation.
    */
   public Iterable<String> arguments(ArtifactExpander artifactExpander)
-      throws CommandLineExpansionException {
+      throws CommandLineExpansionException, InterruptedException {
     return arguments();
   }
 
-  public void addToFingerprint(ActionKeyContext actionKeyContext, Fingerprint fingerprint)
-      throws CommandLineExpansionException {
+  /**
+   * Adds the command line to the provided {@link Fingerprint}.
+   *
+   * <p>Some of the implementations may require the to expand provided directory in order to produce
+   * a unique key. Consequently, the result of calling this function can be different depending on
+   * whether the {@link ArtifactExpander} is provided. Moreover, without it, the produced key may
+   * not always be unique.
+   */
+  public void addToFingerprint(
+      ActionKeyContext actionKeyContext,
+      @Nullable ArtifactExpander artifactExpander,
+      Fingerprint fingerprint)
+      throws CommandLineExpansionException, InterruptedException {
     for (String s : arguments()) {
       fingerprint.addString(s);
     }
@@ -93,13 +106,13 @@ public abstract class CommandLine {
     }
 
     @Override
-    public Iterable<String> arguments() throws CommandLineExpansionException {
+    public Iterable<String> arguments() throws CommandLineExpansionException, InterruptedException {
       return IterablesChain.concat(executableArgs, commandLine.arguments());
     }
 
     @Override
     public Iterable<String> arguments(ArtifactExpander artifactExpander)
-        throws CommandLineExpansionException {
+        throws CommandLineExpansionException, InterruptedException {
       return IterablesChain.concat(executableArgs, commandLine.arguments(artifactExpander));
     }
   }
@@ -117,13 +130,13 @@ public abstract class CommandLine {
     }
 
     @Override
-    public Iterable<String> arguments() throws CommandLineExpansionException {
+    public Iterable<String> arguments() throws CommandLineExpansionException, InterruptedException {
       return IterablesChain.concat(commandLine.arguments(), executableArgs);
     }
 
     @Override
     public Iterable<String> arguments(ArtifactExpander artifactExpander)
-        throws CommandLineExpansionException {
+        throws CommandLineExpansionException, InterruptedException {
       return IterablesChain.concat(commandLine.arguments(artifactExpander), executableArgs);
     }
   }
@@ -168,6 +181,9 @@ public abstract class CommandLine {
       return Joiner.on(' ').join(arguments());
     } catch (CommandLineExpansionException e) {
       return "Error in expanding command line";
+    } catch (InterruptedException unused) {
+      Thread.currentThread().interrupt();
+      return "Interrupted while expanding command line";
     }
   }
 }

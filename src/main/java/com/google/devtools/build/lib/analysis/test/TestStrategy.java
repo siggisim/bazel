@@ -16,6 +16,7 @@ package com.google.devtools.build.lib.analysis.test;
 
 import com.google.common.annotations.VisibleForTesting;
 import com.google.common.base.Preconditions;
+import com.google.common.base.Strings;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.Iterables;
 import com.google.common.collect.Lists;
@@ -39,6 +40,9 @@ import com.google.devtools.build.lib.exec.StreamedTestOutput;
 import com.google.devtools.build.lib.exec.TestLogHelper;
 import com.google.devtools.build.lib.exec.TestXmlOutputParser;
 import com.google.devtools.build.lib.exec.TestXmlOutputParserException;
+import com.google.devtools.build.lib.server.FailureDetails.FailureDetail;
+import com.google.devtools.build.lib.server.FailureDetails.TestAction;
+import com.google.devtools.build.lib.server.FailureDetails.TestAction.Code;
 import com.google.devtools.build.lib.util.Fingerprint;
 import com.google.devtools.build.lib.util.OS;
 import com.google.devtools.build.lib.util.io.OutErr;
@@ -137,11 +141,17 @@ public abstract class TestStrategy implements TestActionContext {
    * @return the command line as string list.
    * @throws ExecException if {@link #expandedArgsFromAction} throws
    */
-  public static ImmutableList<String> getArgs(TestRunnerAction testAction) throws ExecException {
+  public static ImmutableList<String> getArgs(TestRunnerAction testAction)
+      throws ExecException, InterruptedException {
     try {
       return expandedArgsFromAction(testAction);
     } catch (CommandLineExpansionException e) {
-      throw new UserExecException(e);
+      throw new UserExecException(
+          e,
+          FailureDetail.newBuilder()
+              .setMessage(Strings.nullToEmpty(e.getMessage()))
+              .setTestAction(TestAction.newBuilder().setCode(Code.COMMAND_LINE_EXPANSION_FAILURE))
+              .build());
     }
   }
 
@@ -154,7 +164,7 @@ public abstract class TestStrategy implements TestActionContext {
    * @throws CommandLineExpansionException
    */
   public static ImmutableList<String> expandedArgsFromAction(TestRunnerAction testAction)
-      throws CommandLineExpansionException {
+      throws CommandLineExpansionException, InterruptedException {
     List<String> args = Lists.newArrayList();
     // TODO(ulfjack): `executedOnWindows` is incorrect for remote execution, where we need to
     // consider the target configuration, not the machine Bazel happens to run on. Change this to
@@ -244,7 +254,7 @@ public abstract class TestStrategy implements TestActionContext {
    * the "categorical timeouts" which are based on the --test_timeout flag. A rule picks its timeout
    * but ends up with the same effective value as all other rules in that bucket.
    */
-  protected final Duration getTimeout(TestRunnerAction testAction) {
+  protected static final Duration getTimeout(TestRunnerAction testAction) {
     BuildConfiguration configuration = testAction.getConfiguration();
     return configuration
         .getFragment(TestConfiguration.class)
@@ -321,7 +331,10 @@ public abstract class TestStrategy implements TestActionContext {
       if (testResultData.getStatus() != BlazeTestStatus.INCOMPLETE
           && TestLogHelper.shouldOutputTestLog(executionOptions.testOutput, isPassed)) {
         TestLogHelper.writeTestLog(
-            testLog, testName, actionExecutionContext.getFileOutErr().getOutputStream());
+            testLog,
+            testName,
+            actionExecutionContext.getFileOutErr().getOutputStream(),
+            executionOptions.maxTestOutputBytes);
       }
     } finally {
       if (isPassed) {

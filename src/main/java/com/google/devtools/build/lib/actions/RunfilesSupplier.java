@@ -18,10 +18,10 @@ import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.ImmutableSet;
 import com.google.devtools.build.lib.collect.nestedset.NestedSet;
-import com.google.devtools.build.lib.syntax.StarlarkValue;
 import com.google.devtools.build.lib.vfs.PathFragment;
 import java.io.IOException;
 import java.util.Map;
+import net.starlark.java.eval.StarlarkValue;
 
 /** Convenience wrapper around runfiles allowing lazy expansion. */
 // TODO(bazel-team): Ideally we could refer to Runfiles objects directly here, but current package
@@ -40,13 +40,10 @@ public interface RunfilesSupplier extends StarlarkValue {
   /**
    * Returns mappings from runfiles directories to artifact mappings in that directory.
    *
-   * @param resolver used when reading a {@link com.google.devtools.build.lib.analysis.Runfiles}
-   *     pruning manifest
    * @return runfiles' mappings
    * @throws IOException
    */
-  ImmutableMap<PathFragment, Map<PathFragment, Artifact>> getMappings(ArtifactPathResolver resolver)
-      throws IOException;
+  ImmutableMap<PathFragment, Map<PathFragment, Artifact>> getMappings();
 
   /** @return the runfiles manifest artifacts, if any. */
   ImmutableList<Artifact> getManifests();

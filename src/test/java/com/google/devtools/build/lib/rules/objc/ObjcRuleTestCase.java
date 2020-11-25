@@ -37,6 +37,7 @@ import com.google.devtools.build.lib.analysis.ConfiguredTarget;
 import com.google.devtools.build.lib.analysis.OutputGroupInfo;
 import com.google.devtools.build.lib.analysis.config.BuildConfiguration;
 import com.google.devtools.build.lib.analysis.config.BuildOptions;
+import com.google.devtools.build.lib.analysis.config.BuildOptionsView;
 import com.google.devtools.build.lib.analysis.config.CompilationMode;
 import com.google.devtools.build.lib.analysis.config.InvalidConfigurationException;
 import com.google.devtools.build.lib.analysis.config.transitions.SplitTransition;
@@ -237,7 +238,7 @@ public abstract class ObjcRuleTestCase extends BuildViewTestCase {
     throw new AssertionError();
   }
 
-  private static List<String> compilationModeCopts(CompilationMode mode) {
+  protected static ImmutableList<String> compilationModeCopts(CompilationMode mode) {
     switch (mode) {
       case DBG:
         return ImmutableList.<String>builder()
@@ -314,8 +315,10 @@ public abstract class ObjcRuleTestCase extends BuildViewTestCase {
       throws InterruptedException, OptionsParsingException, InvalidConfigurationException {
     ImmutableList.Builder<BuildConfiguration> splitConfigs = ImmutableList.builder();
 
+    BuildOptionsView fragmentRestrictedOptions =
+        new BuildOptionsView(configuration.getOptions(), splitTransition.requiresOptionFragments());
     for (BuildOptions splitOptions :
-        splitTransition.split(configuration.getOptions(), eventCollector).values()) {
+        splitTransition.split(fragmentRestrictedOptions, eventCollector).values()) {
       splitConfigs.add(getSkyframeExecutor().getConfigurationForTesting(
           reporter, configuration.fragmentClasses(), splitOptions));
     }
@@ -467,42 +470,15 @@ public abstract class ObjcRuleTestCase extends BuildViewTestCase {
     assertHasRequirement(action, ExecutionRequirements.REQUIRES_DARWIN);
   }
 
-  protected ConfiguredTarget addBinWithTransitiveDepOnFrameworkImport(boolean compileInfoMigration)
-      throws Exception {
-    ConfiguredTarget lib =
-        compileInfoMigration
-            ? addLibWithDepOnFrameworkImportPostMigration()
-            : addLibWithDepOnFrameworkImportPreMigration();
+  protected ConfiguredTarget addBinWithTransitiveDepOnFrameworkImport() throws Exception {
+    ConfiguredTarget lib = addLibWithDepOnFrameworkImport();
     return createBinaryTargetWriter("//bin:bin")
         .setList("deps", lib.getLabel().toString())
         .write();
 
   }
 
-  private ConfiguredTarget addLibWithDepOnFrameworkImportPreMigration() throws Exception {
-    scratch.file(
-        "fx/defs.bzl",
-        "def _custom_static_framework_import_impl(ctx):",
-        "  return [apple_common.new_objc_provider(",
-        "      framework_search_paths=depset(ctx.attr.framework_search_paths))]",
-        "custom_static_framework_import = rule(",
-        "    _custom_static_framework_import_impl,",
-        "    attrs={'framework_search_paths': attr.string_list()},",
-        ")");
-    scratch.file(
-        "fx/BUILD",
-        "load(':defs.bzl', 'custom_static_framework_import')",
-        "custom_static_framework_import(",
-        "    name = 'fx',",
-        "    framework_search_paths = ['fx/fx1.framework', 'fx/fx2.framework'],",
-        ")");
-    return createLibraryTargetWriter("//lib:lib")
-        .setAndCreateFiles("srcs", "a.m", "b.m", "private.h")
-        .setList("deps", "//fx:fx")
-        .write();
-  }
-
-  private ConfiguredTarget addLibWithDepOnFrameworkImportPostMigration() throws Exception {
+  private ConfiguredTarget addLibWithDepOnFrameworkImport() throws Exception {
     scratch.file(
         "fx/defs.bzl",
         "def _custom_static_framework_import_impl(ctx):",
@@ -575,7 +551,9 @@ public abstract class ObjcRuleTestCase extends BuildViewTestCase {
     assertThat(provider.include())
         .containsExactly(
             PathFragment.create("x/incdir"),
-            getAppleCrosstoolConfiguration().getGenfilesFragment().getRelative("x/incdir"));
+            getAppleCrosstoolConfiguration()
+                .getGenfilesFragment(RepositoryName.MAIN)
+                .getRelative("x/incdir"));
   }
 
   protected void checkCompilesWithHdrs(RuleType ruleType) throws Exception {
@@ -897,7 +875,7 @@ public abstract class ObjcRuleTestCase extends BuildViewTestCase {
     assertThat(Joiner.on(" ").join(linkAction.getArguments()))
         .contains("-bundle_loader " + getBinArtifact("bin_lipobin", binTarget).getExecPath());
     assertThat(Joiner.on(" ").join(linkAction.getArguments()))
-        .contains("-Xlinker -rpath -Xlinker @loader_path/Frameworks");
+        .contains("-Wl,-rpath,@loader_path/Frameworks");
   }
 
   protected Action lipoLibAction(String libLabel) throws Exception {
@@ -951,8 +929,13 @@ public abstract class ObjcRuleTestCase extends BuildViewTestCase {
       BuildConfiguration configuration, String... unrootedPaths) {
     ImmutableList.Builder<String> rootedPaths = new ImmutableList.Builder<>();
     for (String unrootedPath : unrootedPaths) {
-      rootedPaths.add(unrootedPath)
-          .add(configuration.getGenfilesFragment().getRelative(unrootedPath).getSafePathString());
+      rootedPaths
+          .add(unrootedPath)
+          .add(
+              configuration
+                  .getGenfilesFragment(RepositoryName.MAIN)
+                  .getRelative(unrootedPath)
+                  .getSafePathString());
     }
     return rootedPaths.build();
   }
@@ -1023,6 +1006,7 @@ public abstract class ObjcRuleTestCase extends BuildViewTestCase {
     assertThat(compileActionA.getArguments())
         .containsAtLeastElementsIn(allExpectedCoptsBuilder.build())
         .inOrder();
+    assertThat(compileActionA.getArguments()).doesNotContain("-D_GLIBCXX_DEBUG");
   }
 
   private void addTransitiveDefinesUsage(RuleType topLevelRuleType) throws Exception {
@@ -1150,7 +1134,7 @@ public abstract class ObjcRuleTestCase extends BuildViewTestCase {
 
   /** Returns the directory where objc modules will be cached. */
   protected String getModulesCachePath() throws InterruptedException {
-    return getAppleCrosstoolConfiguration().getGenfilesFragment()
+    return getAppleCrosstoolConfiguration().getGenfilesFragment(RepositoryName.MAIN)
         + "/"
         + CompilationSupport.OBJC_MODULE_CACHE_DIR_NAME;
   }
@@ -1777,7 +1761,7 @@ public abstract class ObjcRuleTestCase extends BuildViewTestCase {
     assertThat(getFirstArtifactEndingWith(linkAction.getInputs(),
         "package/libDylib2Lib.a")).isNull();
 
-    // Sanity check that the identical binary without dylibs would be fully linked.
+    // Check that the identical binary without dylibs would be fully linked.
     Action alternateLipobinAction = lipoBinAction("//package:alternate");
     Artifact alternateBinArtifact = getFirstArtifactEndingWith(alternateLipobinAction.getInputs(),
         "package/alternate_bin");
