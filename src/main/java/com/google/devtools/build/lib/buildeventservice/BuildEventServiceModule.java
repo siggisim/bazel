@@ -348,6 +348,7 @@ public abstract class BuildEventServiceModule<BESOptionsT extends BuildEventServ
     this.uploaderFactoryToCleanup = uploaderFactory;
 
     try {
+      cmdEnv.getReporter().getOutErr().printErrLn("Creating transports");
       bepTransports = createBepTransports(cmdEnv, uploaderSupplier, artifactGroupNamer);
     } catch (IOException e) {
       cmdEnv
@@ -433,6 +434,7 @@ public abstract class BuildEventServiceModule<BESOptionsT extends BuildEventServ
           exitCode.getExitCode().equals(ExitCode.OOM_ERROR)
               ? AbortReason.OUT_OF_MEMORY
               : AbortReason.INTERNAL);
+      System.err.println("Shutting down uploader factory due to crash");
       uploaderFactoryToCleanup.shutdown();
     }
   }
@@ -455,6 +457,7 @@ public abstract class BuildEventServiceModule<BESOptionsT extends BuildEventServ
       cancelAndResetPendingUploads();
       if (uploaderFactoryToCleanup != null) {
         uploaderFactoryToCleanup.shutdown();
+      System.err.println("Shutting down uploader factory due to bazel shutdown");
       }
     }
   }
@@ -479,12 +482,14 @@ public abstract class BuildEventServiceModule<BESOptionsT extends BuildEventServ
                   executor));
 
       try (AutoProfiler p = GoogleAutoProfilerUtils.logged("waiting for BES close")) {
+        System.err.println("wait for futures: " + transportFutures);
         Uninterruptibles.getUninterruptibly(Futures.allAsList(transportFutures.values()));
       }
     } catch (ExecutionException e) {
       // Futures.withTimeout wraps the TimeoutException in an ExecutionException when the future
       // times out.
       if (isTimeoutException(e)) {
+        System.err.println("wait timeout");
         throw createAbruptExitException(
             e,
             "The Build Event Protocol upload timed out.",
@@ -492,6 +497,7 @@ public abstract class BuildEventServiceModule<BESOptionsT extends BuildEventServ
       }
 
       Throwables.throwIfInstanceOf(e.getCause(), AbruptExitException.class);
+      System.err.println("wait exception");
       throw new RuntimeException(
           String.format(
               "Unexpected Exception '%s' when closing BEP transports, this is a bug.",

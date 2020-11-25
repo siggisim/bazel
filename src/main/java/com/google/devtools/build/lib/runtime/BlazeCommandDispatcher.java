@@ -375,7 +375,7 @@ public class BlazeCommandDispatcher implements CommandDispatcher {
       reporter.addHandler(storedEventHandler);
       for (BlazeModule module : runtime.getBlazeModules()) {
         try (SilentCloseable closeable = Profiler.instance().profile(module + ".beforeCommand")) {
-          reporter.getOutErr().printErrLn("Calling before command from dispatcher on "+module);
+          // reporter.getOutErr().printErrLn("Calling before command from dispatcher on "+module);
           module.beforeCommand(env);
         } catch (AbruptExitException e) {
           logger.atInfo().withCause(e).log("Error in %s", module);

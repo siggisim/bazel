@@ -193,6 +193,7 @@ class ByteStreamBuildEventArtifactUploader implements BuildEventArtifactUploader
         final ListenableFuture<Void> upload;
         Context prevCtx = ctx.attach();
         try {
+          System.err.println("Adding path: ", path);
           upload = uploader.uploadBlobAsync(path.getDigest(), chunker, /* forceUpload=*/ false);
         } finally {
           ctx.detach(prevCtx);
@@ -245,10 +246,12 @@ class ByteStreamBuildEventArtifactUploader implements BuildEventArtifactUploader
   @Override
   public void shutdown() {
     if (shutdown.getAndSet(true)) {
+    System.err.println("Shutting down artifact uploader getsettrue");
       return;
     }
     uploader.release();
     uploadExecutor.shutdown();
+    System.err.println("Shutting down artifact uploader");
   }
 
   private static class PathConverterImpl implements PathConverter {
