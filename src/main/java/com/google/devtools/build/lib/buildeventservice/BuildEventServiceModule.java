@@ -286,6 +286,7 @@ public abstract class BuildEventServiceModule<BESOptionsT extends BuildEventServ
 
   @Override
   public void beforeCommand(CommandEnvironment cmdEnv) {
+    System.err.println("Before command");
     this.invocationId = cmdEnv.getCommandId().toString();
     this.buildRequestId = cmdEnv.getBuildRequestId();
     this.reporter = cmdEnv.getReporter();
@@ -326,14 +327,17 @@ public abstract class BuildEventServiceModule<BESOptionsT extends BuildEventServ
     boolean commandIsShutdown = "shutdown".equals(cmdEnv.getCommandName());
     waitForPreviousInvocation(commandIsShutdown);
     if (commandIsShutdown && uploaderFactoryToCleanup != null) {
+      System.err.println("Shutting down due to command");
       uploaderFactoryToCleanup.shutdown();
     }
 
     if (!whitelistedCommands(besOptions).contains(cmdEnv.getCommandName())) {
+      System.err.println("This option doesn't support BES");
       // Exit early if the running command isn't supported.
       return;
     }
 
+    System.err.println("Creating uploader");
     BuildEventArtifactUploaderFactory uploaderFactory =
         cmdEnv
             .getRuntime()
@@ -356,6 +360,7 @@ public abstract class BuildEventServiceModule<BESOptionsT extends BuildEventServ
       return;
     }
     if (bepTransports.isEmpty()) {
+      System.err.println("No need to stream");
       // Exit early if there are no transports to stream to.
       return;
     }
@@ -367,6 +372,7 @@ public abstract class BuildEventServiceModule<BESOptionsT extends BuildEventServ
             .artifactGroupNamer(artifactGroupNamer)
             .oomMessage(parsingResult.getOptions(CommonCommandOptions.class).oomMessage)
             .build();
+    System.err.println("Streamer created");
 
     cmdEnv.getEventBus().register(streamer);
     registerOutAndErrOutputStreams();
@@ -543,7 +549,7 @@ public abstract class BuildEventServiceModule<BESOptionsT extends BuildEventServ
   }
 
   private void closeBepTransports() throws AbruptExitException {
-    System.out.println("Closing transport closeBepTransports");
+    System.err.println("Closing transport closeBepTransports");
     previousUploadMode = besOptions.besUploadMode;
     closeFuturesWithTimeoutsMap =
         constructCloseFuturesMapWithTimeouts(streamer.getCloseFuturesMap());
@@ -564,18 +570,18 @@ public abstract class BuildEventServiceModule<BESOptionsT extends BuildEventServ
       }
     }
     if (!blockingTransportFutures.isEmpty()) {
-      System.out.println("blockingTransportFutures isn't empty");
+      System.err.println("blockingTransportFutures isn't empty");
       waitForBuildEventTransportsToClose(blockingTransportFutures, besUploadModeIsSynchronous);
     }
   }
 
   @Override
   public void afterCommand() throws AbruptExitException {
-    // System.out.println("BESM After command");
+    // System.err.println("BESM After command");
     if (streamer != null) {
-    System.out.println("We've got a streamer");
+    System.err.println("We've got a streamer");
       if (!streamer.isClosed()) {
-        System.out.println("And it's not closed");
+        System.err.println("And it's not closed");
         // This should not occur, but close with an internal error if a {@link BuildEventStreamer}
         // bug manifests as an unclosed streamer.
         logger.atWarning().log("Attempting to close BES streamer after command");
@@ -594,7 +600,7 @@ public abstract class BuildEventServiceModule<BESOptionsT extends BuildEventServ
 
     // besStreamOptions can be null if we are crashing. Don't crash here too.
     if (besStreamOptions != null && !besStreamOptions.keepBackendConnections) {
-      System.out.println("Clearing bes client");
+      System.err.println("Clearing bes client");
       clearBesClient();
     } else if (besStreamOptions == null) {
       BugReport.sendBugReport(new NullPointerException("besStreamOptions null: in a crash?"));
