@@ -160,6 +160,7 @@ abstract class FileTransport implements BuildEventTransport {
           uploader.shutdown();
           timeoutExecutor.shutdown();
         }
+        System.err.println("CLOSING FUTURE");
         closeFuture.set(null);
       }
     }
