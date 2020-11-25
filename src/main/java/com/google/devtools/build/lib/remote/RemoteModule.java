@@ -504,7 +504,7 @@ public final class RemoteModule extends BlazeModule {
             retrier,
             digestUtil,
             uploader.retain());
-    // uploader.release();
+    uploader.release();
     Context requestContext =
         TracingMetadataUtils.contextWithMetadata(buildRequestId, invocationId, "bes-upload");
     buildEventArtifactUploaderFactoryDelegate.init(
