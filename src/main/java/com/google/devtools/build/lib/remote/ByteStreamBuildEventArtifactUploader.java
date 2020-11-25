@@ -194,7 +194,7 @@ class ByteStreamBuildEventArtifactUploader implements BuildEventArtifactUploader
         final ListenableFuture<Void> upload;
         Context prevCtx = ctx.attach();
         try {
-          System.err.println("Adding path: "+ path.path);
+          System.err.println("Adding path REF: "+ uploader.refCnt()+ " PATH: " +path.path);
           upload = uploader.uploadBlobAsync(path.getDigest(), chunker, /* forceUpload=*/ false);
         } finally {
           ctx.detach(prevCtx);
@@ -251,6 +251,7 @@ class ByteStreamBuildEventArtifactUploader implements BuildEventArtifactUploader
       return;
     }
     System.err.println("Releasing uploader");
+    System.err.println("Reference count ZZA: " + uploader.refCnt());
     uploader.release();
     System.err.println("Reference count A: " + uploader.refCnt());
     System.err.println("Releasing upload executor");
