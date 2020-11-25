@@ -189,12 +189,14 @@ class ByteStreamUploader extends AbstractReferenceCounted {
       if (isShutdown) {
         return;
       }
+      System.err.println("Shutting down BSU");
       isShutdown = true;
       // Before cancelling, copy the futures to a separate list in order to avoid concurrently
       // iterating over and modifying the map (cancel triggers a listener that removes the entry
       // from the map. the listener is executed in the same thread.).
       List<Future<Void>> uploadsToCancel = new ArrayList<>(uploadsInProgress.values());
       for (Future<Void> upload : uploadsToCancel) {
+        System.err.println("Cancelling upload "+upload);
         upload.cancel(true);
       }
     }
@@ -228,10 +230,10 @@ class ByteStreamUploader extends AbstractReferenceCounted {
    */
   public ListenableFuture<Void> uploadBlobAsync(
       Digest digest, Chunker chunker, boolean forceUpload) {
-    if (!isShutdown) {
-      System.err.println("Uploading blob async while shutdown");
-    }
     synchronized (lock) {
+      if (!isShutdown) {
+        System.err.println("Uploading blob async while shutdown");
+      }
       checkState(!isShutdown, "Must not call uploadBlobs after shutdown.");
 
       if (!forceUpload && uploadedBlobs.contains(HashCode.fromString(digest.getHash()))) {
@@ -340,6 +342,8 @@ class ByteStreamUploader extends AbstractReferenceCounted {
 
   @Override
   protected void deallocate() {
+    System.err.println("Shutting down BSU due to deallocate call");
+
     shutdown();
     channel.release();
   }
