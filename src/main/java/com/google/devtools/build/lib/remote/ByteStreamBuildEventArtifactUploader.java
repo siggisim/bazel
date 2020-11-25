@@ -249,7 +249,9 @@ class ByteStreamBuildEventArtifactUploader implements BuildEventArtifactUploader
     System.err.println("Shutting down artifact uploader getsettrue");
       return;
     }
+    System.err.println("Releasing uploader");
     uploader.release();
+    System.err.println("Releasing upload executor");
     uploadExecutor.shutdown();
     System.err.println("Shutting down artifact uploader");
   }
