@@ -286,7 +286,7 @@ public abstract class BuildEventServiceModule<BESOptionsT extends BuildEventServ
 
   @Override
   public void beforeCommand(CommandEnvironment cmdEnv) {
-    System.err.println("Before command");
+    cmdEnv.getReporter().getOutErr().printErrLn("Before command");
     this.invocationId = cmdEnv.getCommandId().toString();
     this.buildRequestId = cmdEnv.getBuildRequestId();
     this.reporter = cmdEnv.getReporter();
@@ -327,17 +327,17 @@ public abstract class BuildEventServiceModule<BESOptionsT extends BuildEventServ
     boolean commandIsShutdown = "shutdown".equals(cmdEnv.getCommandName());
     waitForPreviousInvocation(commandIsShutdown);
     if (commandIsShutdown && uploaderFactoryToCleanup != null) {
-      System.err.println("Shutting down due to command");
+      cmdEnv.getReporter().getOutErr().printErrLn("Shutting down due to command");
       uploaderFactoryToCleanup.shutdown();
     }
 
     if (!whitelistedCommands(besOptions).contains(cmdEnv.getCommandName())) {
-      System.err.println("This option doesn't support BES");
+      cmdEnv.getReporter().getOutErr().printErrLn("This option doesn't support BES");
       // Exit early if the running command isn't supported.
       return;
     }
 
-    System.err.println("Creating uploader");
+    cmdEnv.getReporter().getOutErr().printErrLn("Creating uploader");
     BuildEventArtifactUploaderFactory uploaderFactory =
         cmdEnv
             .getRuntime()
@@ -360,7 +360,7 @@ public abstract class BuildEventServiceModule<BESOptionsT extends BuildEventServ
       return;
     }
     if (bepTransports.isEmpty()) {
-      System.err.println("No need to stream");
+      cmdEnv.getReporter().getOutErr().printErrLn("No need to stream");
       // Exit early if there are no transports to stream to.
       return;
     }
@@ -372,7 +372,7 @@ public abstract class BuildEventServiceModule<BESOptionsT extends BuildEventServ
             .artifactGroupNamer(artifactGroupNamer)
             .oomMessage(parsingResult.getOptions(CommonCommandOptions.class).oomMessage)
             .build();
-    System.err.println("Streamer created");
+    cmdEnv.getReporter().getOutErr().printErrLn("Streamer created");
 
     cmdEnv.getEventBus().register(streamer);
     registerOutAndErrOutputStreams();
