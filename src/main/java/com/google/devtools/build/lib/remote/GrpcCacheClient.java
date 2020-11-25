@@ -155,6 +155,7 @@ public class GrpcCacheClient implements RemoteCacheClient, MissingDigestsFinder 
       return;
     }
     uploader.release();
+    System.err.println("Reference count B: " + uploader.refCnt());
     channel.release();
   }
 

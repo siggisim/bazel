@@ -63,6 +63,7 @@ class ByteStreamBuildEventArtifactUploader implements BuildEventArtifactUploader
       Context ctx,
       @Nullable String remoteInstanceName,
       int maxUploadThreads) {
+    System.err.println("Reference count AA: " + uploader.refCnt());
     this.uploader = Preconditions.checkNotNull(uploader);
     String remoteServerInstanceName = Preconditions.checkNotNull(remoteServerName);
     if (!Strings.isNullOrEmpty(remoteInstanceName)) {
@@ -251,6 +252,7 @@ class ByteStreamBuildEventArtifactUploader implements BuildEventArtifactUploader
     }
     System.err.println("Releasing uploader");
     uploader.release();
+    System.err.println("Reference count A: " + uploader.refCnt());
     System.err.println("Releasing upload executor");
     uploadExecutor.shutdown();
     System.err.println("Shutting down artifact uploader");
