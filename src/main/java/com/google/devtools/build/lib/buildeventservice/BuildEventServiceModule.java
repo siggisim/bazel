@@ -543,7 +543,7 @@ public abstract class BuildEventServiceModule<BESOptionsT extends BuildEventServ
   }
 
   private void closeBepTransports() throws AbruptExitException {
-    System.out.println("Closing transport closeBepTransports")
+    System.out.println("Closing transport closeBepTransports");
     previousUploadMode = besOptions.besUploadMode;
     closeFuturesWithTimeoutsMap =
         constructCloseFuturesMapWithTimeouts(streamer.getCloseFuturesMap());
@@ -564,18 +564,18 @@ public abstract class BuildEventServiceModule<BESOptionsT extends BuildEventServ
       }
     }
     if (!blockingTransportFutures.isEmpty()) {
-      System.out.println("blockingTransportFutures isn't empty")
+      System.out.println("blockingTransportFutures isn't empty");
       waitForBuildEventTransportsToClose(blockingTransportFutures, besUploadModeIsSynchronous);
     }
   }
 
   @Override
   public void afterCommand() throws AbruptExitException {
-    System.out.println("BESM After command")
+    System.out.println("BESM After command");
     if (streamer != null) {
-    System.out.println("We've got a streamer")
+    System.out.println("We've got a streamer");
       if (!streamer.isClosed()) {
-        System.out.println("And it's not closed")
+        System.out.println("And it's not closed");
         // This should not occur, but close with an internal error if a {@link BuildEventStreamer}
         // bug manifests as an unclosed streamer.
         logger.atWarning().log("Attempting to close BES streamer after command");
@@ -594,7 +594,7 @@ public abstract class BuildEventServiceModule<BESOptionsT extends BuildEventServ
 
     // besStreamOptions can be null if we are crashing. Don't crash here too.
     if (besStreamOptions != null && !besStreamOptions.keepBackendConnections) {
-      System.out.println("Clearing bes client")
+      System.out.println("Clearing bes client");
       clearBesClient();
     } else if (besStreamOptions == null) {
       BugReport.sendBugReport(new NullPointerException("besStreamOptions null: in a crash?"));
