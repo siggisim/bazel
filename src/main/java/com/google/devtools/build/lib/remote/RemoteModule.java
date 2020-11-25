@@ -509,7 +509,7 @@ public final class RemoteModule extends BlazeModule {
         TracingMetadataUtils.contextWithMetadata(buildRequestId, invocationId, "bes-upload");
     buildEventArtifactUploaderFactoryDelegate.init(
         new ByteStreamBuildEventArtifactUploaderFactory(
-            uploader.retain(),
+            uploader,
             cacheClient,
             cacheChannel.authority(),
             requestContext,
