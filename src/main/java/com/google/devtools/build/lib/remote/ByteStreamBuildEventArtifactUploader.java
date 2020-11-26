@@ -228,6 +228,8 @@ class ByteStreamBuildEventArtifactUploader implements BuildEventArtifactUploader
         Futures.whenAllSucceed(allPaths)
             .callAsync(() -> queryRemoteCache(allPaths), MoreExecutors.directExecutor());
 
+    Thread.sleep(10000);
+
     // Upload local files (if any)
     ListenableFuture<List<PathMetadata>> allPathsMetadata =
         Futures.transformAsync(
