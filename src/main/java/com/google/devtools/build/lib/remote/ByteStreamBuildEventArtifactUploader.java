@@ -197,9 +197,9 @@ class ByteStreamBuildEventArtifactUploader implements BuildEventArtifactUploader
         Context prevCtx = ctx.attach();
         // Retaining uploader here also seems to fix it, but questionable
         try {
-          // if (uploader.refCnt() == 0) {
+          if (uploader.refCnt() == 0) {
             System.err.println("Adding path REF: "+ uploader.refCnt()+ " PATH: " +path.path);
-          // }
+          }
           upload = uploader.uploadBlobAsync(path.getDigest(), chunker, /* forceUpload=*/ false);
         } finally {
           ctx.detach(prevCtx);
