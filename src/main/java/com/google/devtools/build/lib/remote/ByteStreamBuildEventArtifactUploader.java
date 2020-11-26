@@ -170,6 +170,11 @@ class ByteStreamBuildEventArtifactUploader implements BuildEventArtifactUploader
     if (digestsToQuery.isEmpty()) {
       return Futures.immediateFuture(ImmutableIterable.from(knownRemotePaths));
     }
+
+    try {
+      Thread.sleep(10000);
+    } catch (InterruptedException e) { e.printStackTrace(); }
+
     return Futures.transform(
         ctx.call(() -> missingDigestsFinder.findMissingDigests(digestsToQuery)),
         (missingDigests) -> {
@@ -228,9 +233,6 @@ class ByteStreamBuildEventArtifactUploader implements BuildEventArtifactUploader
         Futures.whenAllSucceed(allPaths)
             .callAsync(() -> queryRemoteCache(allPaths), MoreExecutors.directExecutor());
 
-    try {
-    Thread.sleep(10000);
-    } catch (InterruptedException e) { e.printStackTrace(); }
     // Upload local files (if any)
     ListenableFuture<List<PathMetadata>> allPathsMetadata =
         Futures.transformAsync(
