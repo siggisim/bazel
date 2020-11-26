@@ -780,6 +780,7 @@ public class RemoteSpawnRunner implements SpawnRunner {
 
     Collection<Path> outputFiles = resolveActionInputs(execRoot, spawn.getOutputFiles());
     try (SilentCloseable c = Profiler.instance().profile(UPLOAD_TIME, "upload outputs")) {
+      System.err.println("Uploading C");
       remoteCache.upload(
           actionKey, action, command, execRoot, outputFiles, context.getFileOutErr());
     } catch (IOException e) {
