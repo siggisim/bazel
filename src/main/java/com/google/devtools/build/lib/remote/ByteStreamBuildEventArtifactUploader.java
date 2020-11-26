@@ -153,6 +153,7 @@ class ByteStreamBuildEventArtifactUploader implements BuildEventArtifactUploader
    */
   private ListenableFuture<ImmutableIterable<PathMetadata>> queryRemoteCache(
       ImmutableList<ListenableFuture<PathMetadata>> allPaths) throws Exception {
+    System.err.println("Querying remote cache");
     List<PathMetadata> knownRemotePaths = new ArrayList<>(allPaths.size());
     List<PathMetadata> filesToQuery = new ArrayList<>();
     Set<Digest> digestsToQuery = new HashSet<>();
@@ -174,6 +175,7 @@ class ByteStreamBuildEventArtifactUploader implements BuildEventArtifactUploader
     return Futures.transform(
         ctx.call(() -> missingDigestsFinder.findMissingDigests(digestsToQuery)),
         (missingDigests) -> {
+          System.err.println("Missing digests returned");
           List<PathMetadata> filesToQueryUpdated = processQueryResult(missingDigests, filesToQuery);
           return ImmutableIterable.from(Iterables.concat(knownRemotePaths, filesToQueryUpdated));
         },
