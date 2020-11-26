@@ -327,7 +327,7 @@ final class ExecutionServer extends ExecutionImplBase {
 
       ActionResult result = null;
       try {
-        System.err.println("Uploading A");
+        outErr.GetErrorStream().write("Uploading A"));
         result = cache.upload(actionKey, action, command, execRoot, outputs, outErr, exitCode);
       } catch (ExecException e) {
         if (errStatus == null) {
