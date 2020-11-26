@@ -333,10 +333,12 @@ public class BuildEventStreamer {
   }
 
   public void closeOnAbort(AbortReason reason) {
+    System.err.println("======== CLOSE ON ABORT "+reason);
     close(checkNotNull(reason));
   }
 
   public void close() {
+    System.err.println("======== CLOSE NULL REASON");
     close(/*reason=*/ null);
   }
 
@@ -344,6 +346,7 @@ public class BuildEventStreamer {
     if (closed) {
       return;
     }
+    System.err.println("======== ACTUALLY SETTING CLOSE");
     closed = true;
     if (reason != null) {
       addAbortReason(reason);
@@ -501,6 +504,7 @@ public class BuildEventStreamer {
     }
 
     if (finalEventsToCome != null && finalEventsToCome.isEmpty()) {
+      System.err.println("======== CLOSING STREAM BECAUSE EMPTY AND NOT NULL");
       close();
     }
   }
@@ -653,6 +657,7 @@ public class BuildEventStreamer {
     finalEventsToCome.removeAll(postedEvents);
     if (finalEventsToCome.isEmpty()) {
       close();
+      System.err.println("======== CLOSING STREAM BECAUSE BUILD COMPLETE");
     }
   }
 

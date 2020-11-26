@@ -413,6 +413,7 @@ public abstract class BuildEventServiceModule<BESOptionsT extends BuildEventServ
   }
 
   private void forceShutdownBuildEventStreamer(AbortReason reason) {
+    System.err.println("======== FORCE SHUTTING DOWN STREAM "+reason);
     streamer.closeOnAbort(reason);
     closeFuturesWithTimeoutsMap =
         constructCloseFuturesMapWithTimeouts(streamer.getCloseFuturesMap());
