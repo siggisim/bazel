@@ -199,11 +199,8 @@ public class GrpcCacheClient implements RemoteCacheClient, MissingDigestsFinder 
                       getMissingDigestCalls) {
                     result.addAll(callFuture.get().getMissingBlobDigestsList());
                   }
-                  System.err.println("Missing digests returned");
-                  System.err.println("Sleeping for random time seconds");
-                  if (Math.random() < .1) {
-                    try { Thread.sleep((long)(Math.random() * 3000)); System.err.println("Slept for 3 sec"); } catch(InterruptedException e) {}
-                  }
+
+                  try { Thread.sleep((long)(Math.random() * 3000)); } catch(InterruptedException e) {}
 
                   return result.build();
                 },
