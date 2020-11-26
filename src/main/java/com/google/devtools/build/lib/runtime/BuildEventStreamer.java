@@ -339,7 +339,7 @@ public class BuildEventStreamer {
 
   public void close() {
     System.err.println("======== CLOSE NULL REASON");
-    close(/*reason=*/ null);
+    //close(/*reason=*/ null);
   }
 
   private synchronized void close(@Nullable AbortReason reason) {
