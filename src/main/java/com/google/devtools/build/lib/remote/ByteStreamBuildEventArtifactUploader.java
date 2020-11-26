@@ -171,10 +171,6 @@ class ByteStreamBuildEventArtifactUploader implements BuildEventArtifactUploader
       return Futures.immediateFuture(ImmutableIterable.from(knownRemotePaths));
     }
 
-    try {
-      Thread.sleep(10000);
-    } catch (InterruptedException e) { e.printStackTrace(); }
-
     return Futures.transform(
         ctx.call(() -> missingDigestsFinder.findMissingDigests(digestsToQuery)),
         (missingDigests) -> {
