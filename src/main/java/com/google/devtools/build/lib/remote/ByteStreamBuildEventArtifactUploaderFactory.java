@@ -57,9 +57,9 @@ class ByteStreamBuildEventArtifactUploaderFactory implements
         env.getOptions().getOptions(RemoteOptions.class).buildEventUploadMaxThreads);
   }
 
-  @Override
-  public void shutdown() {
-    System.err.println("SHUTTING DOWN AT THE FACTORY LEVEL");
-    uploader.shutdown();
-  }
+  // @Override
+  // public void shutdown() {
+  //   System.err.println("SHUTTING DOWN AT THE FACTORY LEVEL");
+  //   uploader.shutdown();
+  // }
 }
