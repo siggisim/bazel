@@ -233,13 +233,13 @@ class ByteStreamBuildEventArtifactUploader implements BuildEventArtifactUploader
     ImmutableList<ListenableFuture<PathMetadata>> allPaths = allPathMetadata.build();
     ListenableFuture<ImmutableIterable<PathMetadata>> allPathsUpdatedMetadata =
         Futures.whenAllSucceed(allPaths)
-            .call(() -> queryRemoteCache(allPaths), MoreExecutors.directExecutor());
+            .callAsync(() -> queryRemoteCache(allPaths), MoreExecutors.directExecutor());
 
     System.err.println("Uploading files: "+files);
 
     // Upload local files (if any)
     ListenableFuture<List<PathMetadata>> allPathsMetadata =
-        Futures.transform(
+        Futures.transformAsync(
             allPathsUpdatedMetadata,
             (paths) -> uploadLocalFiles(paths),
             MoreExecutors.directExecutor());
