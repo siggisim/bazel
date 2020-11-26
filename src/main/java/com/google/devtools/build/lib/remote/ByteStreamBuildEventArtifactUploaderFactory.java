@@ -58,7 +58,7 @@ class ByteStreamBuildEventArtifactUploaderFactory implements
   }
 
   @Override
-  public BuildEventArtifactUploader shutdown(CommandEnvironment env) {
+  public void shutdown(CommandEnvironment env) {
     System.err.println("SHUTTING DOWN AT THE FACTORY LEVEL");
     uploader.shutdown();
   }
