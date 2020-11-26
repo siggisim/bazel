@@ -197,7 +197,9 @@ class ByteStreamBuildEventArtifactUploader implements BuildEventArtifactUploader
         // Retaining uploader here also seems to fix it, but questionable
         try {
           if (Math.random() <.01) {
+            try {
             Thread.sleep(10000);
+            } catch(InterruptedException e) {}
           }
           if (uploader.refCnt() == 0) {
           System.err.println("Adding path REF: "+ uploader.refCnt()+ " PATH: " +path.path);
