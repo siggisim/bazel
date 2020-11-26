@@ -194,7 +194,9 @@ class ByteStreamBuildEventArtifactUploader implements BuildEventArtifactUploader
         final ListenableFuture<Void> upload;
         Context prevCtx = ctx.attach();
         try {
+          if (uploader.refCnt() == 0) {
           System.err.println("Adding path REF: "+ uploader.refCnt()+ " PATH: " +path.path);
+          }
           upload = uploader.uploadBlobAsync(path.getDigest(), chunker, /* forceUpload=*/ false);
         } finally {
           ctx.detach(prevCtx);
