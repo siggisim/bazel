@@ -230,9 +230,7 @@ class ByteStreamBuildEventArtifactUploader implements BuildEventArtifactUploader
 
     try {
     Thread.sleep(10000);
-    } catch {
-      
-    }
+    } catch (InterruptedException e) { e.printStackTrace(); }
     // Upload local files (if any)
     ListenableFuture<List<PathMetadata>> allPathsMetadata =
         Futures.transformAsync(
