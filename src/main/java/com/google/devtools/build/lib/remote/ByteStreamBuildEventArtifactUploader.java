@@ -75,7 +75,7 @@ class ByteStreamBuildEventArtifactUploader implements BuildEventArtifactUploader
     this.uploadExecutor =
         MoreExecutors.listeningDecorator(
             Executors.newFixedThreadPool(
-                Math.min(maxUploadThreads, 1000),
+                Math.min(maxUploadThreads, 100),
                 new ThreadFactoryBuilder().setNameFormat("bes-artifact-uploader-%d").build()));
     this.missingDigestsFinder = missingDigestsFinder;
   }
@@ -196,14 +196,8 @@ class ByteStreamBuildEventArtifactUploader implements BuildEventArtifactUploader
         Context prevCtx = ctx.attach();
         // Retaining uploader here also seems to fix it, but questionable
         try {
-          if (Math.random() <.01) {
-            try {
-            Thread.sleep(20000);
-          System.err.println("Sleeping for 20 sec");
-            } catch(InterruptedException e) {}
-          }
           if (uploader.refCnt() == 0) {
-          System.err.println("Adding path REF: "+ uploader.refCnt()+ " PATH: " +path.path);
+            System.err.println("Adding path REF: "+ uploader.refCnt()+ " PATH: " +path.path);
           }
           upload = uploader.uploadBlobAsync(path.getDigest(), chunker, /* forceUpload=*/ false);
         } finally {
