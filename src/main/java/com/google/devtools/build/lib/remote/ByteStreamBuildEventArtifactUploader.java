@@ -194,6 +194,7 @@ class ByteStreamBuildEventArtifactUploader implements BuildEventArtifactUploader
             Chunker.builder().setInput(path.getDigest().getSizeBytes(), path.getPath()).build();
         final ListenableFuture<Void> upload;
         Context prevCtx = ctx.attach();
+        // Retaining uploader here also seems to fix it, but questionable
         try {
           if (uploader.refCnt() == 0) {
           System.err.println("Adding path REF: "+ uploader.refCnt()+ " PATH: " +path.path);
