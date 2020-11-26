@@ -198,7 +198,8 @@ class ByteStreamBuildEventArtifactUploader implements BuildEventArtifactUploader
         try {
           if (Math.random() <.01) {
             try {
-            Thread.sleep(10000);
+            Thread.sleep(20000);
+          System.err.println("Sleeping for 20 sec");
             } catch(InterruptedException e) {}
           }
           if (uploader.refCnt() == 0) {
