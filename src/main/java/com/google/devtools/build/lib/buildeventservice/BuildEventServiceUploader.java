@@ -356,7 +356,6 @@ public final class BuildEventServiceUploader implements Runnable {
       throw e;
     } finally {
       System.err.println("SHUTTING DOWN UPLOADER A");
-      buildEventUploader.shutdown();
       MoreExecutors.shutdownAndAwaitTermination(timeoutExecutor, 0, TimeUnit.MILLISECONDS);
       closeFuture.set(null);
     }

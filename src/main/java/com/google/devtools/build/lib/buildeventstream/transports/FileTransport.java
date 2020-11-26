@@ -160,7 +160,6 @@ abstract class FileTransport implements BuildEventTransport {
           logger.atSevere().withCause(e).log("Failed to close BEP file output stream.");
         } finally {
           System.err.println("SHUTTING DOWN UPLOADER B");
-          uploader.shutdown();
           timeoutExecutor.shutdown();
         }
         System.err.println("CLOSING FUTURE");

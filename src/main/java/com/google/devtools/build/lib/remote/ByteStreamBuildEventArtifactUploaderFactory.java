@@ -56,4 +56,10 @@ class ByteStreamBuildEventArtifactUploaderFactory implements
         remoteInstanceName,
         env.getOptions().getOptions(RemoteOptions.class).buildEventUploadMaxThreads);
   }
+
+  @Override
+  public BuildEventArtifactUploader shutdown(CommandEnvironment env) {
+    System.err.println("SHUTTING DOWN AT THE FACTORY LEVEL");
+    uploader.shutdown();
+  }
 }
