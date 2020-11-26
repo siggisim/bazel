@@ -177,7 +177,7 @@ class ByteStreamBuildEventArtifactUploader implements BuildEventArtifactUploader
         (missingDigests) -> {
           System.err.println("Missing digests returned");
           System.err.println("Sleeping for random time seconds");
-          try { Thread.sleep(Math.random()*20000); System.err.println("Sleeping for 20 sec"); } catch(InterruptedException e) {}
+          try { Thread.sleep(long(Math.random()*20000)); System.err.println("Sleeping for 20 sec"); } catch(InterruptedException e) {}
           List<PathMetadata> filesToQueryUpdated = processQueryResult(missingDigests, filesToQuery);
           return ImmutableIterable.from(Iterables.concat(knownRemotePaths, filesToQueryUpdated));
         },
