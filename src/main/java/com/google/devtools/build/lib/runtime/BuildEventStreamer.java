@@ -165,11 +165,13 @@ public class BuildEventStreamer {
     this.progressCount = 0;
     this.artifactGroupNamer = artifactGroupNamer;
     this.oomMessage = oomMessage;
+    System.err.println("@@@@@@@ Streamer init");
   }
 
   @ThreadCompatible
   public void registerOutErrProvider(OutErrProvider outErrProvider) {
     this.outErrProvider = outErrProvider;
+    System.err.println("@@@@@@@ Streamer registered");
   }
 
   /**
@@ -284,6 +286,7 @@ public class BuildEventStreamer {
    */
   private synchronized void clearMissingStartEvent(BuildEventId id) {
     if (pendingEvents.containsKey(BuildEventIdUtil.buildStartedId())) {
+    System.err.println("@@@@@@@@@ Gross clearing missing started event");
       ImmutableSet.Builder<BuildEventId> children = ImmutableSet.builder();
       children.add(ProgressEvent.INITIAL_PROGRESS_UPDATE);
       children.add(id);
@@ -303,6 +306,7 @@ public class BuildEventStreamer {
   /** Clear pending events by generating aborted events for all their requisits. */
   private synchronized void clearPendingEvents() {
     while (!pendingEvents.isEmpty()) {
+    System.err.println("@@@@@@@@@ Clearing pending events");
       BuildEventId id = pendingEvents.keySet().iterator().next();
       buildEvent(new AbortedEvent(id, getLastAbortReason(), getAbortReasonDetails()));
     }
@@ -314,6 +318,7 @@ public class BuildEventStreamer {
    */
   private synchronized void clearAnnouncedEvents(Collection<BuildEventId> dontclear) {
     if (announcedEvents != null) {
+    System.err.println("@@@@@@@@@ Clearing announced events");
       // create a copy of the identifiers to clear, as the post method
       // will change the set of already announced events.
       Set<BuildEventId> ids;
@@ -329,26 +334,29 @@ public class BuildEventStreamer {
   }
 
   public synchronized boolean isClosed() {
+    System.err.println("@@@@@@@@@ Checking if streamer is closed it's "+closed);
     return closed;
   }
 
   public void closeOnAbort(AbortReason reason) {
-    System.err.println("======== CLOSE ON ABORT "+reason);
+    System.err.println("@@@@@@@@@ CLOSE ON ABORT "+reason);
     close(checkNotNull(reason));
   }
 
   public void close() {
-    System.err.println("======== CLOSE NULL REASON");
+    System.err.println("@@@@@@@@@ CLOSE NULL REASON");
     close(/*reason=*/ null);
   }
 
   private synchronized void close(@Nullable AbortReason reason) {
     if (closed) {
+    System.err.println("@@@@@@@@@ Trying to close but already closed");
       return;
     }
-    System.err.println("======== ACTUALLY SETTING CLOSE");
+    System.err.println("@@@@@@@@@ ACTUALLY SETTING CLOSE");
     closed = true;
     if (reason != null) {
+    System.err.println("@@@@@@@@@ Closed with abort reason "+reason);
       addAbortReason(reason);
     }
 
@@ -413,16 +421,19 @@ public class BuildEventStreamer {
 
   @Subscribe
   public void buildInterrupted(BuildInterruptedEvent event) {
+    System.err.println("@@@@@@@@@ Build interrupted");
     addAbortReason(AbortReason.USER_INTERRUPTED);
   }
 
   @Subscribe
   public void noAnalyze(NoAnalyzeEvent event) {
+    System.err.println("@@@@@@@@@ No analyze what?");
     addAbortReason(AbortReason.NO_ANALYZE);
   }
 
   @Subscribe
   public void noExecution(NoExecutionEvent event) {
+    System.err.println("@@@@@@@@@ No execution what?");
     addAbortReason(AbortReason.NO_BUILD);
   }
 
@@ -441,6 +452,7 @@ public class BuildEventStreamer {
     }
 
     if (shouldIgnoreBuildEvent(event)) {
+      System.err.println("@@@@@@@@@ Ignoring event "+event);
       return;
     }
 
@@ -494,11 +506,13 @@ public class BuildEventStreamer {
     }
 
     if (event instanceof BuildCompletingEvent) {
+    System.err.println("@@@@@@@@@ BuildCompletingEvent");
       buildComplete(event);
     }
 
     if (event instanceof NoBuildEvent) {
       if (!((NoBuildEvent) event).separateFinishedEvent()) {
+       System.err.println("@@@@@@@@@ not separateFinishedEvent");
         buildComplete(event);
       }
     }

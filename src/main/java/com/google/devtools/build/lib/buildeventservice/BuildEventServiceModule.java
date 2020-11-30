@@ -376,6 +376,7 @@ public abstract class BuildEventServiceModule<BESOptionsT extends BuildEventServ
     cmdEnv.getReporter().getOutErr().printErrLn("Streamer created");
 
     cmdEnv.getEventBus().register(streamer);
+    System.err.println("Streamer registered");
     registerOutAndErrOutputStreams();
 
     // This event should probably be posted in a more general place (e.g. {@link BuildTool};
@@ -391,6 +392,7 @@ public abstract class BuildEventServiceModule<BESOptionsT extends BuildEventServ
     SynchronizedOutputStream err = new SynchronizedOutputStream(bufferSize, chunkSize);
 
     this.outErr = OutErr.create(out, err);
+    System.err.println("ErrOut registered");
     streamer.registerOutErrProvider(
         new BuildEventStreamer.OutErrProvider() {
           @Override
@@ -404,7 +406,10 @@ public abstract class BuildEventServiceModule<BESOptionsT extends BuildEventServ
           }
         });
     err.registerStreamer(streamer);
+    System.err.println("Err stream registered");
+
     out.registerStreamer(streamer);
+    System.err.println("Out stream registered registered");
   }
 
   @Override
@@ -562,6 +567,7 @@ public abstract class BuildEventServiceModule<BESOptionsT extends BuildEventServ
         constructCloseFuturesMapWithTimeouts(streamer.getCloseFuturesMap());
     halfCloseFuturesWithTimeoutsMap =
         constructCloseFuturesMapWithTimeouts(streamer.getHalfClosedMap());
+    System.err.println("Getting futures from streamer");
     boolean besUploadModeIsSynchronous =
         besOptions.besUploadMode == BesUploadMode.WAIT_FOR_UPLOAD_COMPLETE;
     Map<BuildEventTransport, ListenableFuture<Void>> blockingTransportFutures = new HashMap<>();
@@ -622,6 +628,7 @@ public abstract class BuildEventServiceModule<BESOptionsT extends BuildEventServ
     this.buildRequestId = null;
     this.reporter = null;
     this.streamer = null;
+    System.err.println("Niling out streamer in commandComplete");
   }
 
   private void constructAndMaybeReportInvocationIdUrl() {
