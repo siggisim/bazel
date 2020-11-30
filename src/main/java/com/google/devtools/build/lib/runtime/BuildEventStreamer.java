@@ -197,14 +197,18 @@ public class BuildEventStreamer {
         // a complete stream has to have at least one entry. In this way we keep the invariant
         // that the set of posted events is always a subset of the set of announced events.
         announcedEvents.add(id);
+        System.err.println("@@@@@@@@@ Adding announced event " + id);
+
         if (!event.getChildrenEvents().contains(ProgressEvent.INITIAL_PROGRESS_UPDATE)) {
           BuildEvent progress = ProgressEvent.progressChainIn(progressCount, event.getEventId());
           linkEvents = ImmutableList.of(progress);
           progressCount++;
           announcedEvents.addAll(progress.getChildrenEvents());
+          System.err.println("@@@@@@@@@ Adding all child progress events " + progress.getChildrenEvents());
           // the new first event in the stream, implicitly announced by the fact that complete
           // stream may not be empty.
           announcedEvents.add(progress.getEventId());
+          System.err.println("@@@@@@@@@ Adding progress event " + progress.getEventId());
           postedEvents.add(progress.getEventId());
         }
 
@@ -234,6 +238,7 @@ public class BuildEventStreamer {
                 finalLinkEvents.add(progressEvent);
                 progressCount++;
                 announcedEvents.addAll(progressEvent.getChildrenEvents());
+                System.err.println("@@@@@@@@@ Adding child progress event " + progressEvent.getChildrenEvents());
                 postedEvents.add(progressEvent.getEventId());
               });
         }
@@ -249,9 +254,11 @@ public class BuildEventStreamer {
 
       postedEvents.add(id);
       announcedEvents.addAll(event.getChildrenEvents());
+      System.err.println("@@@@@@@@@ Adding children " + event.getChildrenEvents());
       // We keep as an invariant that postedEvents is a subset of announced events, so this is a
       // cheaper test for equality
       if (announcedEvents.size() == postedEvents.size()) {
+        System.err.println("@@@@@@@@@ That's the last event");
         lastEvent = true;
       }
     }
@@ -306,7 +313,7 @@ public class BuildEventStreamer {
   /** Clear pending events by generating aborted events for all their requisits. */
   private synchronized void clearPendingEvents() {
     while (!pendingEvents.isEmpty()) {
-    System.err.println("@@@@@@@@@ Clearing pending events");
+      System.err.println("@@@@@@@@@ Clearing pending events");
       BuildEventId id = pendingEvents.keySet().iterator().next();
       buildEvent(new AbortedEvent(id, getLastAbortReason(), getAbortReasonDetails()));
     }
@@ -362,6 +369,7 @@ public class BuildEventStreamer {
 
     if (finalEventsToCome == null) {
       // This should only happen if there's a crash. Try to clean up as best we can.
+      System.err.println("@@@@@@@@@ Final events to come is null");
       clearEventsAndPostFinalProgress(null);
     }
 
@@ -445,7 +453,9 @@ public class BuildEventStreamer {
         BuildEventId id = event.getEventId();
         if (finalEventsToCome.contains(id)) {
           finalEventsToCome.remove(id);
+          System.err.println("@@@@@@@@@ Removing finalEventToCome "+id);
         } else {
+          System.err.println("@@@@@@@@@ Didn't even contain "+id);
           return;
         }
       }
@@ -455,6 +465,7 @@ public class BuildEventStreamer {
       System.err.println("@@@@@@@@@ Ignoring event "+event);
       return;
     }
+      System.err.println("@@@@@@@@@ Not ignored "+event);
 
     if (event instanceof BuildStartingEvent) {
       BuildRequest buildRequest = ((BuildStartingEvent) event).getRequest();
@@ -499,8 +510,10 @@ public class BuildEventStreamer {
     if (event instanceof BuildCompleteEvent) {
       BuildCompleteEvent buildCompleteEvent = (BuildCompleteEvent) event;
       if (isCrash(buildCompleteEvent) || isCatastrophe(buildCompleteEvent)) {
+        System.err.println("@@@@@@@@@ Aborting internal");
         addAbortReason(AbortReason.INTERNAL);
       } else if (isIncomplete(buildCompleteEvent)) {
+        System.err.println("@@@@@@@@@ Aborting incomplete");
         addAbortReason(AbortReason.INCOMPLETE);
       }
     }
@@ -518,7 +531,7 @@ public class BuildEventStreamer {
     }
 
     if (finalEventsToCome != null && finalEventsToCome.isEmpty()) {
-      System.err.println("======== CLOSING STREAM BECAUSE EMPTY AND NOT NULL");
+      System.err.println("@@@@@@@@@ CLOSING STREAM BECAUSE EMPTY AND NOT NULL");
       close();
     }
   }
@@ -541,6 +554,7 @@ public class BuildEventStreamer {
     BuildEvent updateEvent = ProgressEvent.progressUpdate(progressCount, out, err);
     progressCount++;
     announcedEvents.addAll(updateEvent.getChildrenEvents());
+    System.err.println("@@@@@@@@@ Adding announced stdourstderr events "+updateEvent.getChildrenEvents());
     postedEvents.add(updateEvent.getEventId());
     return updateEvent;
   }
@@ -669,9 +683,10 @@ public class BuildEventStreamer {
 
     finalEventsToCome = new HashSet<>(announcedEvents);
     finalEventsToCome.removeAll(postedEvents);
+    System.err.println("@@@@@@@@@@ REMOVING ALL POSTED EVENTS");
     if (finalEventsToCome.isEmpty()) {
       close();
-      System.err.println("======== CLOSING STREAM BECAUSE BUILD COMPLETE");
+      System.err.println("@@@@@@@@@@ CLOSING STREAM BECAUSE BUILD COMPLETE");
     }
   }
 
