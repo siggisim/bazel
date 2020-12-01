@@ -199,9 +199,9 @@ public class GrpcCacheClient implements RemoteCacheClient, MissingDigestsFinder 
                       getMissingDigestCalls) {
                     result.addAll(callFuture.get().getMissingBlobDigestsList());
                   }
-                  if (Math.random() < .1) {
-                    try { Thread.sleep((long)(Math.random() * 3000)); } catch(InterruptedException e) {}
-                  }
+                  // if (Math.random() < .1) {
+                  //   try { Thread.sleep((long)(Math.random() * 3000)); } catch(InterruptedException e) {}
+                  // }
 
                   return result.build();
                 },
@@ -226,6 +226,11 @@ public class GrpcCacheClient implements RemoteCacheClient, MissingDigestsFinder 
   private ListenableFuture<FindMissingBlobsResponse> getMissingDigests(
       FindMissingBlobsRequest request) {
     Context ctx = Context.current();
+
+    if (Math.random() < .1) {
+      try { Thread.sleep((long)(Math.random() * 3000)); } catch(InterruptedException e) {}
+    }
+
     return Utils.refreshIfUnauthenticatedAsync(
         () -> retrier.executeAsync(() -> ctx.call(() -> casFutureStub().findMissingBlobs(request))),
         callCredentialsProvider);
