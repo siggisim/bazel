@@ -210,6 +210,7 @@ public class BuildEventStreamer {
           announcedEvents.add(progress.getEventId());
           System.err.println("@@@@@@@@@ Adding progress event " + progress.getEventId());
           postedEvents.add(progress.getEventId());
+          System.err.println("@@@@@@@@@@ POSTING progress event "+event);
         }
 
         if (!bufferedStdoutStderrPairs.isEmpty()) {
@@ -240,6 +241,7 @@ public class BuildEventStreamer {
                 announcedEvents.addAll(progressEvent.getChildrenEvents());
                 System.err.println("@@@@@@@@@ Adding child progress event " + progressEvent.getChildrenEvents());
                 postedEvents.add(progressEvent.getEventId());
+                System.err.println("@@@@@@@@@@ POSTING child progress event "+progressEvent.getChildrenEvents());
               });
         }
       }
@@ -248,11 +250,13 @@ public class BuildEventStreamer {
         // The specification for BuildInfoEvent says that there may be many such events,
         // but all except the first one should be ignored.
         if (postedEvents.contains(id)) {
+          System.err.println("@@@@@@@@@@ Ignoring BuildInfoEvent "+id);
           return;
         }
       }
 
       postedEvents.add(id);
+      System.err.println("@@@@@@@@@@ Adding posted event "+id);
       announcedEvents.addAll(event.getChildrenEvents());
       System.err.println("@@@@@@@@@ Adding children " + event.getChildrenEvents());
       // We keep as an invariant that postedEvents is a subset of announced events, so this is a
@@ -331,6 +335,8 @@ public class BuildEventStreamer {
       Set<BuildEventId> ids;
       synchronized (this) {
         ids = Sets.difference(announcedEvents, postedEvents);
+        System.err.println("@@@@@@@@@@ DIFFING ANNOUNCED AND POSTED "+ids);
+
       }
       for (BuildEventId id : ids) {
         if (!dontclear.contains(id)) {
@@ -556,6 +562,7 @@ public class BuildEventStreamer {
     announcedEvents.addAll(updateEvent.getChildrenEvents());
     System.err.println("@@@@@@@@@ Adding announced stdourstderr events "+updateEvent.getChildrenEvents());
     postedEvents.add(updateEvent.getEventId());
+    System.err.println("@@@@@@@@@@ Posting stdoutstrerr  "+updateEvent.getChildrenEvents());
     return updateEvent;
   }
 
@@ -743,6 +750,7 @@ public class BuildEventStreamer {
     // Check if all prerequisite events are posted already.
     for (BuildEventId prerequisiteId : ((BuildEventWithOrderConstraint) event).postedAfter()) {
       if (!postedEvents.contains(prerequisiteId)) {
+        System.err.println("@@@@@@@@@@ NOW WE GOT PENDING EVENTS "+event);
         pendingEvents.put(prerequisiteId, event);
         return true;
       }
