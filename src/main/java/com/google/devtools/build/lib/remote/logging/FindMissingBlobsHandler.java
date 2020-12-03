@@ -35,9 +35,9 @@ public class FindMissingBlobsHandler
 
   @Override
   public void handleResp(FindMissingBlobsResponse message) {
-    if (Math.random() < .1) {
-      try { Thread.sleep((long)(Math.random() * 3000)); } catch(InterruptedException e) {}
-    }
+    // if (Math.random() < .1) {
+    //   try { Thread.sleep((long)(Math.random() * 3000)); } catch(InterruptedException e) {}
+    // }
     builder.setResponse(message);
   }
 
